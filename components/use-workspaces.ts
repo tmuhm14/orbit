@@ -55,6 +55,31 @@ export function useWorkspaces(
     const { workspace } = await send(`/api/workspaces/${id}`, "PATCH", changes);
     setWorkspaces((list) => list.map((w) => (w.id === id ? workspace : w)));
   }
+  /** Swaps a workspace with its neighbour in the list (-1 up, +1 down). */
+  async function move(id: string, direction: -1 | 1) {
+    const index = workspaces.findIndex((w) => w.id === id);
+    const other = workspaces[index + direction];
+    if (index < 0 || !other) return;
+    const reordered = [...workspaces];
+    reordered[index] = other;
+    reordered[index + direction] = workspaces[index];
+    // Persist every position so older rows that shared a position get a
+    // stable, distinct order.
+    await Promise.all(
+      reordered.map((w, position) =>
+        w.position === position
+          ? null
+          : send(`/api/workspaces/${w.id}`, "PATCH", { position }),
+      ),
+    );
+    setWorkspaces(reordered.map((w, position) => ({ ...w, position })));
+  }
+  async function remove(id: string) {
+    await send(`/api/workspaces/${id}`, "DELETE", {});
+    setWorkspaces((list) => list.filter((w) => w.id !== id));
+    setSlack((list) => list.filter((l) => l.workspaceId !== id));
+    if (currentId === id) select(workspaces.find((w) => w.id !== id)?.id ?? "");
+  }
   async function newAddress(id: string) {
     const { inboxToken } = await send(
       `/api/workspaces/${id}/inbox-token`,
@@ -92,6 +117,8 @@ export function useWorkspaces(
     rename: (id: string, name: string) => update(id, { name }),
     recolor: (id: string, color: string) => update(id, { color }),
     newAddress,
+    move,
+    remove,
     slack,
     routeSlack,
     disconnectSlack,

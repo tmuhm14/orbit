@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { authConfig } from "@/lib/supabase/config";
 import { NOTE_COLUMNS, fromRow, type NoteRow } from "@/lib/notes-db";
 import { loadWorkspaces } from "@/lib/workspaces-db";
+import { isAdminEmail } from "@/lib/admin";
 
 export default async function Home() {
   if (!authConfig()) redirect("/login");
@@ -37,6 +38,7 @@ export default async function Home() {
       }
       initialSlack={spaces?.slack ?? []}
       inboundDomain={process.env.RESEND_INBOUND_DOMAIN || null}
+      isAdmin={isAdminEmail(user.email)}
     />
   );
 }
