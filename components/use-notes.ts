@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { browserNotes, type Note } from "@/lib/notes";
+import { browserNotes, mergeServerNotes, type Note } from "@/lib/notes";
 
 const SAVE_DELAY = 800;
 const POLL_INTERVAL = 30_000;
@@ -80,32 +80,13 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
     await flush();
     try {
       const { notes: server }: { notes: Note[] } = await api("/api/notes");
-      const serverIds = new Set(server.map((n) => n.id));
+      // Decide from a snapshot: React may run this updater more than once,
+      // so it must not read state that it also writes.
+      const known = new Map(synced.current);
       setNotes((local) => {
-        const dirty = (n: Note) => synced.current.get(n.id) !== n.updatedAt;
-        const localById = new Map(local.map((n) => [n.id, n]));
-        const next: Note[] = [];
-        for (const remote of server) {
-          const mine = localById.get(remote.id);
-          if (mine && dirty(mine)) next.push(mine);
-          else if (mine || !synced.current.has(remote.id)) {
-            // Unchanged here: take the server copy (it may be newer).
-            next.push(remote);
-            synced.current.set(remote.id, remote.updatedAt);
-          }
-          // Otherwise it was deleted here and the delete is still pending.
-        }
-        // Keep local notes the server hasn't seen yet; drop clean ones it deleted.
-        for (const mine of local)
-          if (
-            !serverIds.has(mine.id) &&
-            (!synced.current.has(mine.id) || dirty(mine))
-          )
-            next.push(mine);
-        for (const id of [...synced.current.keys()])
-          if (!serverIds.has(id) && !next.some((n) => n.id === id))
-            synced.current.delete(id);
-        return next;
+        const merged = mergeServerNotes(local, server, known);
+        synced.current = merged.synced;
+        return merged.notes;
       });
     } catch {
       /* Keep working offline; the next refresh will retry. */

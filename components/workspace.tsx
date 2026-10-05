@@ -390,10 +390,8 @@ export function Workspace({
             <div className="legacy-import">
               <p>
                 {browserNoteCount === 1
-                  ? "1 note is"
-                  : `${browserNoteCount} notes are`}{" "}
-                saved only in this browser. Move them into your account so they
-                sync everywhere.
+                  ? "1 note is saved only in this browser. Move it into your account so it syncs everywhere."
+                  : `${browserNoteCount} notes are saved only in this browser. Move them into your account so they sync everywhere.`}
               </p>
               <div>
                 <button className="text-button" onClick={dismissBrowserNotes}>

@@ -191,3 +191,37 @@ export const browserNotes = {
     }
   },
 };
+
+/**
+ * Combines a fresh server list with local state. `synced` maps note id to the
+ * updatedAt the server last confirmed: a local note whose updatedAt differs
+ * has unsaved edits (kept), and a synced id missing locally was deleted here
+ * (stays deleted). Pure, so it is safe inside a React state updater.
+ */
+export function mergeServerNotes(
+  local: Note[],
+  server: Note[],
+  synced: ReadonlyMap<string, string>,
+): { notes: Note[]; synced: Map<string, string> } {
+  const nextSynced = new Map(synced);
+  const dirty = (n: Note) => synced.get(n.id) !== n.updatedAt;
+  const localById = new Map(local.map((n) => [n.id, n]));
+  const serverIds = new Set(server.map((n) => n.id));
+  const notes: Note[] = [];
+  for (const remote of server) {
+    const mine = localById.get(remote.id);
+    if (mine && dirty(mine)) notes.push(mine);
+    else if (mine || !synced.has(remote.id)) {
+      notes.push(remote);
+      nextSynced.set(remote.id, remote.updatedAt);
+    }
+  }
+  // Keep local notes the server hasn't seen yet; drop clean ones it deleted.
+  for (const mine of local)
+    if (!serverIds.has(mine.id) && (!synced.has(mine.id) || dirty(mine)))
+      notes.push(mine);
+  const kept = new Set(notes.map((n) => n.id));
+  for (const id of synced.keys())
+    if (!serverIds.has(id) && !kept.has(id)) nextSynced.delete(id);
+  return { notes, synced: nextSynced };
+}
