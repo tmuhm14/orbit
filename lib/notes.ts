@@ -61,7 +61,18 @@ export type Note = {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
-  source: "web";
+  source: "web" | "slack";
+  origin?: NoteOrigin | null;
+};
+/** Where a captured note came from, kept so it can be traced back. */
+export type NoteOrigin = {
+  kind: "slack";
+  teamId: string;
+  channelId: string;
+  channelName?: string;
+  messageTs: string;
+  authorId?: string;
+  permalink?: string;
 };
 export const STORAGE_KEY = "orbit.notes.v1";
 export const textDoc = (text: string): JSONContent => ({
@@ -86,70 +97,6 @@ export function createNote(title = "", bucket: BucketId = "inbox"): Note {
     source: "web",
   };
 }
-export function exampleNotes(): Note[] {
-  const samples: [string, string, BucketId, string[]][] = [
-    [
-      "A place for all those little ideas",
-      "You do not need to organize a thought before you capture it. That is what your inbox is for.\nOpen a note, type / to add a heading, a list, or a checkbox. Move it to a bucket whenever you are ready.",
-      "inbox",
-      ["getting started"],
-    ],
-    [
-      "Try a slower Sunday morning",
-      "Coffee, a long walk, and absolutely no notifications. Maybe find a new bookshop along the way.",
-      "inbox",
-      ["personal"],
-    ],
-    [
-      "An idea for the next chapter",
-      "What would I make if I had a little more room to think?\nCollect a few possibilities here. There is no need to decide yet.",
-      "inbox",
-      ["ideas"],
-    ],
-    [
-      "Make a little room to focus",
-      "Set aside 25 minutes. Pick one small thing. Start there.",
-      "next",
-      ["personal"],
-    ],
-    [
-      "Build my personal workspace",
-      "A calm place to capture thoughts and turn them into meaningful next steps.\nFirst step: collect what is on my mind.",
-      "projects",
-      ["work"],
-    ],
-    [
-      "Weekend plans with friends",
-      "Waiting for everyone to share their availability.",
-      "waiting",
-      ["personal"],
-    ],
-    [
-      "See the northern lights",
-      "Find a quiet place, far from the city, and look up.",
-      "someday",
-      ["travel"],
-    ],
-    [
-      "A simple weekly review",
-      "Collect your loose notes.\nClarify your inbox.\nReview your next actions, projects, and waiting list.\nReconnect with what matters.",
-      "reference",
-      ["getting started"],
-    ],
-  ];
-  return samples.map(([title, body, bucket, tags], index) => ({
-    id: `welcome-${index}`,
-    title,
-    content: textDoc(body),
-    plainText: body,
-    bucket,
-    tags,
-    createdAt: new Date(Date.now() - index * 3600000).toISOString(),
-    updatedAt: new Date(Date.now() - index * 3600000).toISOString(),
-    completedAt: null,
-    source: "web",
-  }));
-}
 export function isNote(value: unknown): value is Note {
   if (!value || typeof value !== "object") return false;
   const n = value as Note;
@@ -163,6 +110,7 @@ export function isNote(value: unknown): value is Note {
     typeof n.createdAt === "string" &&
     typeof n.updatedAt === "string" &&
     (n.completedAt === null || typeof n.completedAt === "string") &&
+    (n.source === undefined || n.source === "web" || n.source === "slack") &&
     n.content?.type === "doc"
   );
 }
@@ -205,3 +153,75 @@ export const noteRepository = {
     localStorage.setItem(`${STORAGE_KEY}:${userId}`, JSON.stringify(notes));
   },
 };
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const isUuid = (id: string) => UUID.test(id);
+/**
+ * Notes that live only in this browser (from before account storage) and
+ * have not been moved into the account yet. Reading never changes them; the
+ * originals stay in localStorage as a backup after they are moved.
+ */
+export const browserNotes = {
+  pending(userId: string): Note[] {
+    if (localStorage.getItem(`${STORAGE_KEY}:${userId}:uploaded`) === "true")
+      return [];
+    const notes = noteRepository.load(userId);
+    if (noteRepository.hasLegacyNotes(userId)) {
+      let legacy: unknown = null;
+      try {
+        legacy = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+      } catch {
+        /* Unreadable legacy notes stay untouched in storage. */
+      }
+      if (Array.isArray(legacy) && legacy.every(isNote)) {
+        const ids = new Set(notes.map((note) => note.id));
+        notes.push(...legacy.filter((note) => !ids.has(note.id)));
+      }
+    }
+    // Early versions used non-UUID ids, which account storage does not accept.
+    return notes.map((note) =>
+      isUuid(note.id) ? note : { ...note, id: crypto.randomUUID() },
+    );
+  },
+  markUploaded(userId: string) {
+    localStorage.setItem(`${STORAGE_KEY}:${userId}:uploaded`, "true");
+    if (noteRepository.hasLegacyNotes(userId)) {
+      localStorage.setItem(`${STORAGE_KEY}:legacy-owner`, userId);
+      localStorage.setItem(`${STORAGE_KEY}:${userId}:imported`, "true");
+    }
+  },
+};
+
+/**
+ * Combines a fresh server list with local state. `synced` maps note id to the
+ * updatedAt the server last confirmed: a local note whose updatedAt differs
+ * has unsaved edits (kept), and a synced id missing locally was deleted here
+ * (stays deleted). Pure, so it is safe inside a React state updater.
+ */
+export function mergeServerNotes(
+  local: Note[],
+  server: Note[],
+  synced: ReadonlyMap<string, string>,
+): { notes: Note[]; synced: Map<string, string> } {
+  const nextSynced = new Map(synced);
+  const dirty = (n: Note) => synced.get(n.id) !== n.updatedAt;
+  const localById = new Map(local.map((n) => [n.id, n]));
+  const serverIds = new Set(server.map((n) => n.id));
+  const notes: Note[] = [];
+  for (const remote of server) {
+    const mine = localById.get(remote.id);
+    if (mine && dirty(mine)) notes.push(mine);
+    else if (mine || !synced.has(remote.id)) {
+      notes.push(remote);
+      nextSynced.set(remote.id, remote.updatedAt);
+    }
+  }
+  // Keep local notes the server hasn't seen yet; drop clean ones it deleted.
+  for (const mine of local)
+    if (!serverIds.has(mine.id) && (!synced.has(mine.id) || dirty(mine)))
+      notes.push(mine);
+  const kept = new Set(notes.map((n) => n.id));
+  for (const id of synced.keys())
+    if (!serverIds.has(id) && !kept.has(id)) nextSynced.delete(id);
+  return { notes, synced: nextSynced };
+}

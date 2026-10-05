@@ -13,3 +13,9 @@ export function siteUrl() {
       : "http://localhost:3000")
   );
 }
+export const cookieOptions = {
+  httpOnly: true,
+  sameSite: "lax",
+  secure: process.env.NODE_ENV === "production",
+  path: "/",
+} as const;

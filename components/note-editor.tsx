@@ -31,6 +31,7 @@ import {
   ChevronDown,
   CornerDownLeft,
   Hash,
+  ArrowUpRight,
 } from "lucide-react";
 import { BUCKETS, type Note, type BucketId } from "@/lib/notes";
 
@@ -325,8 +326,8 @@ export function NoteEditor({
           >
             <Check size={13} />
             {storageError
-              ? "Not saved — export a backup"
-              : "Saved on this device"}
+              ? "Not saved yet — retrying"
+              : "Synced to your account"}
           </span>
           <button
             className="icon-button"
@@ -372,6 +373,27 @@ export function NoteEditor({
                 </select>
                 <ChevronDown size={14} />
               </div>
+              {note.origin?.kind === "slack" && (
+                <>
+                  <span>Source</span>
+                  <div className="note-source">
+                    {note.origin.permalink ? (
+                      <a
+                        href={note.origin.permalink}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Slack
+                        {note.origin.channelName &&
+                          ` · #${note.origin.channelName}`}
+                        <ArrowUpRight size={13} />
+                      </a>
+                    ) : (
+                      "Slack"
+                    )}
+                  </div>
+                </>
+              )}
               <span>Tags</span>
               <div className="tag-editor">
                 {note.tags.map((t) => (
