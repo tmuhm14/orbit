@@ -43,3 +43,19 @@ test("import keeps the current version of a note instead of duplicating its ID",
   const edited = { ...old, title: "New title" };
   assert.deepEqual(noteRepository.importLegacy("alice", [edited]), [edited]);
 });
+test("browser notes are listed for moving without claiming them, then marked once moved", async () => {
+  const { browserNotes } = await import("../lib/notes.ts");
+  const own = createNote("Mine");
+  const legacy = { ...createNote("Legacy"), id: "welcome-0" };
+  noteRepository.save("alice", [own]);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify([legacy]));
+  const pending = browserNotes.pending("alice");
+  assert.equal(pending.length, 2);
+  assert.equal(pending[0].id, own.id);
+  assert.notEqual(pending[1].id, "welcome-0", "non-UUID ids are replaced");
+  assert.equal(localStorage.getItem(`${STORAGE_KEY}:legacy-owner`), null, "listing claims nothing");
+  browserNotes.markUploaded("alice");
+  assert.deepEqual(browserNotes.pending("alice"), []);
+  assert.equal(noteRepository.hasLegacyNotes("bob"), false, "legacy now belongs to alice");
+  assert.equal(noteRepository.load("alice").length, 1, "originals kept as a backup");
+});

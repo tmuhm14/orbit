@@ -53,9 +53,11 @@ type View = "overview" | BucketId | "completed";
 export function Workspace({
   userId,
   email,
+  initialNotes,
 }: {
   userId: string;
   email: string;
+  initialNotes: Note[] | null;
 }) {
   const {
     notes,
@@ -63,10 +65,10 @@ export function Workspace({
     loaded,
     loadError,
     storageError,
-    legacyAvailable,
-    dismissLegacy,
-    importLegacy,
-  } = useNotes(userId);
+    browserNoteCount,
+    dismissBrowserNotes,
+    importBrowserNotes,
+  } = useNotes(userId, initialNotes);
   const sessionExpired = useSessionWatch(userId);
   const [view, setView] = useState<View>("overview");
   const [selected, setSelected] = useState<string | null>(null);
@@ -108,11 +110,11 @@ export function Workspace({
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [selected]);
-  function importExistingNotes() {
+  async function importExistingNotes() {
     setToast(
-      importLegacy()
-        ? "Existing notes imported into your account"
-        : "Unable to import. Your original notes are unchanged.",
+      (await importBrowserNotes())
+        ? "Notes moved into your account"
+        : "Unable to move notes. They are still saved in this browser.",
     );
   }
   const activeNotes = notes.filter((n) => !n.completedAt);
@@ -330,7 +332,7 @@ export function Workspace({
                 />
                 {storageError
                   ? "Storage needs attention"
-                  : "Saved on this device"}
+                  : "Synced to your account"}
               </small>
             </div>
             <button
@@ -384,21 +386,24 @@ export function Workspace({
           </div>
         </header>
         <main>
-          {legacyAvailable && !loadError && (
+          {browserNoteCount > 0 && !loadError && (
             <div className="legacy-import">
               <p>
-                Have notes from before sign-in? Import this browser’s existing
-                notes into this account.
+                {browserNoteCount === 1
+                  ? "1 note is"
+                  : `${browserNoteCount} notes are`}{" "}
+                saved only in this browser. Move them into your account so they
+                sync everywhere.
               </p>
               <div>
-                <button className="text-button" onClick={dismissLegacy}>
+                <button className="text-button" onClick={dismissBrowserNotes}>
                   Not now
                 </button>
                 <button
                   className="secondary-button"
                   onClick={importExistingNotes}
                 >
-                  Import my notes
+                  Move my notes
                 </button>
               </div>
             </div>
@@ -406,8 +411,8 @@ export function Workspace({
           {storageError && (
             <div className="storage-warning" role="alert">
               {loadError
-                ? "Your saved notes could not be read. The original data has been preserved; editing is paused."
-                : "Your browser could not save the latest changes. Export your notes to keep a backup."}
+                ? "Your notes could not be loaded. Reload the page to try again; editing is paused."
+                : "Your latest changes have not been saved yet. Orbit will keep retrying; export your notes to keep a backup."}
               {!loadError && (
                 <button onClick={exportNotes}>Export backup</button>
               )}

@@ -2905,3 +2905,31 @@ main {
     font-size: 16px;
   }
 }
+
+.slack-link-layout {
+  grid-template-columns: minmax(0, 440px);
+  justify-content: center;
+}
+.slack-link-layout .auth-subtitle strong {
+  color: inherit;
+  font-weight: 600;
+}
+.slack-link-layout .secondary-button,
+.slack-link-layout .primary-button {
+  justify-content: center;
+  width: 100%;
+  margin-top: 8px;
+}
+.note-source a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: inherit;
+  text-decoration: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: #b999df09;
+}
+.note-source a:hover {
+  text-decoration: underline;
+}

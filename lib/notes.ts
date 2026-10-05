@@ -61,7 +61,18 @@ export type Note = {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
-  source: "web";
+  source: "web" | "slack";
+  origin?: NoteOrigin | null;
+};
+/** Where a captured note came from, kept so it can be traced back. */
+export type NoteOrigin = {
+  kind: "slack";
+  teamId: string;
+  channelId: string;
+  channelName?: string;
+  messageTs: string;
+  authorId?: string;
+  permalink?: string;
 };
 export const STORAGE_KEY = "orbit.notes.v1";
 export const textDoc = (text: string): JSONContent => ({
@@ -99,6 +110,7 @@ export function isNote(value: unknown): value is Note {
     typeof n.createdAt === "string" &&
     typeof n.updatedAt === "string" &&
     (n.completedAt === null || typeof n.completedAt === "string") &&
+    (n.source === undefined || n.source === "web" || n.source === "slack") &&
     n.content?.type === "doc"
   );
 }
@@ -139,5 +151,43 @@ export const noteRepository = {
   },
   save(userId: string, notes: Note[]) {
     localStorage.setItem(`${STORAGE_KEY}:${userId}`, JSON.stringify(notes));
+  },
+};
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const isUuid = (id: string) => UUID.test(id);
+/**
+ * Notes that live only in this browser (from before account storage) and
+ * have not been moved into the account yet. Reading never changes them; the
+ * originals stay in localStorage as a backup after they are moved.
+ */
+export const browserNotes = {
+  pending(userId: string): Note[] {
+    if (localStorage.getItem(`${STORAGE_KEY}:${userId}:uploaded`) === "true")
+      return [];
+    const notes = noteRepository.load(userId);
+    if (noteRepository.hasLegacyNotes(userId)) {
+      let legacy: unknown = null;
+      try {
+        legacy = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+      } catch {
+        /* Unreadable legacy notes stay untouched in storage. */
+      }
+      if (Array.isArray(legacy) && legacy.every(isNote)) {
+        const ids = new Set(notes.map((note) => note.id));
+        notes.push(...legacy.filter((note) => !ids.has(note.id)));
+      }
+    }
+    // Early versions used non-UUID ids, which account storage does not accept.
+    return notes.map((note) =>
+      isUuid(note.id) ? note : { ...note, id: crypto.randomUUID() },
+    );
+  },
+  markUploaded(userId: string) {
+    localStorage.setItem(`${STORAGE_KEY}:${userId}:uploaded`, "true");
+    if (noteRepository.hasLegacyNotes(userId)) {
+      localStorage.setItem(`${STORAGE_KEY}:legacy-owner`, userId);
+      localStorage.setItem(`${STORAGE_KEY}:${userId}:imported`, "true");
+    }
   },
 };

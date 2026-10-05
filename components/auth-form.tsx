@@ -273,8 +273,7 @@ function AuthFields({
         )}
       </div>
       <p className="auth-storage-note">
-        Your notes currently stay in this browser, separated by account.
-        Cross-device sync is coming next.
+        Your notes are saved to your account and sync across your devices.
       </p>
     </>
   );
