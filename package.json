@@ -10,7 +10,7 @@
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/notes.test.mjs tests/slack.test.mjs"
+    "test": "node --experimental-strip-types --test tests/notes.test.mjs tests/slack.test.mjs tests/email.test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",

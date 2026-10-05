@@ -3170,3 +3170,19 @@ main {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.workspace-menu-email {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 6px;
+  color: #b7b4c2;
+}
+.workspace-menu-email code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}

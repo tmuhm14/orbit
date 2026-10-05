@@ -55,6 +55,16 @@ export function useWorkspaces(
     const { workspace } = await send(`/api/workspaces/${id}`, "PATCH", changes);
     setWorkspaces((list) => list.map((w) => (w.id === id ? workspace : w)));
   }
+  async function newAddress(id: string) {
+    const { inboxToken } = await send(
+      `/api/workspaces/${id}/inbox-token`,
+      "POST",
+      {},
+    );
+    setWorkspaces((list) =>
+      list.map((w) => (w.id === id ? { ...w, inboxToken } : w)),
+    );
+  }
   async function routeSlack(link: SlackConnection, workspaceId: string) {
     await send("/api/slack-links", "PATCH", { ...link, workspaceId });
     setSlack((list) =>
@@ -81,6 +91,7 @@ export function useWorkspaces(
     create,
     rename: (id: string, name: string) => update(id, { name }),
     recolor: (id: string, color: string) => update(id, { color }),
+    newAddress,
     slack,
     routeSlack,
     disconnectSlack,

@@ -61,12 +61,14 @@ export function Workspace({
   initialNotes,
   initialWorkspaces,
   initialSlack,
+  inboundDomain,
 }: {
   userId: string;
   email: string;
   initialNotes: Note[] | null;
   initialWorkspaces: WorkspaceInfo[];
   initialSlack: SlackConnection[];
+  inboundDomain: string | null;
 }) {
   const {
     notes,
@@ -186,6 +188,12 @@ export function Workspace({
     },
     onRename: spaces.rename,
     onRecolor: spaces.recolor,
+    inboundDomain,
+    onNewAddress: async (id: string) => {
+      await spaces.newAddress(id);
+      setToast("New email address created. The old one no longer works.");
+    },
+    onCopied: () => setToast("Email address copied"),
     onRouteSlack: async (link: SlackConnection, id: string) => {
       await spaces.routeSlack(link, id);
       setToast(

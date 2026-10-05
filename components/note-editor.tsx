@@ -417,6 +417,16 @@ export function NoteEditor({
                   </div>
                 </>
               )}
+              {note.origin?.kind === "email" && (
+                <>
+                  <span>Source</span>
+                  <div className="note-source">
+                    <span title={note.origin.subject}>
+                      Email · {note.origin.from}
+                    </span>
+                  </div>
+                </>
+              )}
               <span>Tags</span>
               <div className="tag-editor">
                 {note.tags.map((t) => (
