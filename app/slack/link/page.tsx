@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { authConfig } from "@/lib/supabase/config";
 import { verifyLinkToken } from "@/lib/slack";
 import { linkSlackAccount } from "./actions";
+import { loadWorkspaces } from "@/lib/workspaces-db";
+import type { Workspace } from "@/lib/notes";
 
 const messages = {
   linked: [
@@ -39,12 +41,25 @@ export default async function SlackLink({
         ? "confirm"
         : "expired";
   let email = "";
+  let workspaces: Workspace[] = [];
   if (state === "confirm") {
     const supabase = authConfig() ? await createClient() : null;
     const user = supabase && (await supabase.auth.getUser()).data.user;
-    if (!user) state = "signin";
-    else email = user.email || "your account";
+    if (!supabase || !user) state = "signin";
+    else {
+      email = user.email || "your account";
+      workspaces = (await loadWorkspaces(supabase))?.workspaces ?? [];
+      if (!workspaces.length) state = "failed";
+    }
   }
+  // Suggest the workspace whose name matches the Slack team, e.g.
+  // "waltzhealth" → "Waltz".
+  const team = (identity?.teamName || "").toLowerCase();
+  const suggested =
+    workspaces.find((w) => {
+      const name = w.name.toLowerCase().replace(/\s+/g, "");
+      return name && team && (team.includes(name) || name.includes(team));
+    }) ?? workspaces[0];
   return (
     <main className="auth-page">
       <Link href="/" className="auth-brand">
@@ -61,11 +76,21 @@ export default async function SlackLink({
               <h2>Connect Slack</h2>
               <p className="auth-subtitle">
                 Messages you send to Orbit from the{" "}
-                <strong>{identity?.teamName || "Slack"}</strong> workspace will
-                go to the Inbox of <strong>{email}</strong>.
+                <strong>{identity?.teamName || "Slack"}</strong> Slack workspace
+                will go to <strong>{email}</strong>.
               </p>
               <form action={linkSlackAccount} className="auth-form">
                 <input type="hidden" name="token" value={token} />
+                <label className="slack-link-select">
+                  <span>Send them to this Orbit workspace</span>
+                  <select name="workspace" defaultValue={suggested?.id}>
+                    {workspaces.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <button className="primary-button" type="submit">
                   Connect Slack
                 </button>

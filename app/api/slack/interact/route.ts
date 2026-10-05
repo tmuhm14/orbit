@@ -58,7 +58,7 @@ export async function POST(request: Request) {
 
   const { data: link, error: linkError } = await admin
     .from("slack_links")
-    .select("user_id")
+    .select("user_id,workspace_id")
     .eq("slack_team_id", action.team.id)
     .eq("slack_user_id", action.user.id)
     .maybeSingle();
@@ -88,6 +88,7 @@ export async function POST(request: Request) {
       {
         id: note.id,
         user_id: link.user_id,
+        workspace_id: link.workspace_id,
         title: note.title,
         content: note.content,
         plain_text: note.plainText,
@@ -107,6 +108,15 @@ export async function POST(request: Request) {
     reply("Orbit couldn't save that message right now. Please try again.");
   else if (!inserted.length)
     reply("That message is already in your Orbit inbox.");
-  else reply(`Added to your Orbit inbox: *${escapeSlackText(note.title)}*`);
+  else {
+    const { data: workspace } = await admin
+      .from("workspaces")
+      .select("name")
+      .eq("id", link.workspace_id)
+      .maybeSingle();
+    reply(
+      `Added to your ${workspace ? `*${escapeSlackText(workspace.name)}* ` : "Orbit "}inbox: ${escapeSlackText(note.title)}`,
+    );
+  }
   return new Response(null, { status: 200 });
 }

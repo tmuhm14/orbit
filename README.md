@@ -25,7 +25,8 @@ Open http://localhost:3000. Use `npm run build` for a production build, `npm sta
 - Tags, workspace-wide search, tag filters, sorting, list/grid views, completion and reopening, and confirmed deletion.
 - Email/password accounts, confirmed email signup, password recovery, and sign-out through Supabase Auth.
 - Account storage in Supabase with row-level security, a one-time move of older browser-only notes, JSON export, and a GTD weekly-review guide.
-- "Send to Orbit" Slack message shortcut that drops messages into the Inbox.
+- Multiple workspaces (e.g. Personal and Waltz) under one login: switch from the sidebar card. Each has its own buckets, notes, tags, and search, and a note can be moved between workspaces from the editor.
+- "Send to Orbit" Slack message shortcut that drops messages into the Inbox of the workspace that Slack is linked to.
 - Responsive layouts, keyboard shortcuts, and reduced-motion support.
 
 Keyboard shortcuts: Cmd/Ctrl+K searches, Cmd/Ctrl+J focuses quick capture. Enter captures; Shift+Enter adds a line. Notes save automatically.
@@ -58,11 +59,13 @@ Browser-facing routes use only the publishable key with the user's session. The 
 
 Use **Send to Orbit** from the ⋯ menu of any Slack message. The message lands in your Inbox tagged `slack`, with a link back to the original. Sending the same message twice does nothing the second time. Slack notes are marked `triage_status = 'pending'` for the planned organizing agent.
 
+Each connected Slack workspace sends to one Orbit workspace. You choose it when connecting (a workspace whose name matches the Slack team is preselected, e.g. `waltzhealth` → Waltz), and can change it or disconnect later under **Slack sends to** in the workspace switcher.
+
 The first time, Orbit replies (visible only to you) with a link to connect your Slack account. Open it in a browser where you are signed in to Orbit and confirm. The link is signed and expires after 15 minutes. Only the server can create Slack links, so no one can claim someone else's Slack account.
 
 Setup:
 
-1. Apply `supabase/migrations/20261005000000_notes_and_slack.sql` to the Supabase project (SQL editor, or `supabase db push`).
+1. Apply the migrations in `supabase/migrations/` in order to the Supabase project (SQL editor, or `supabase db push`).
 2. At https://api.slack.com/apps choose **Create New App → From a manifest**, pick your workspace, and paste:
 
    ```yaml

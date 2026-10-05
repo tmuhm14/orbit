@@ -63,6 +63,16 @@ export type Note = {
   completedAt: string | null;
   source: "web" | "slack";
   origin?: NoteOrigin | null;
+  /** Empty only for notes from older browser storage, before workspaces. */
+  workspaceId: string;
+};
+export type Workspace = { id: string; name: string; position: number };
+/** A Slack account linked to this Orbit account, and where its captures go. */
+export type SlackConnection = {
+  teamId: string;
+  teamName: string | null;
+  slackUserId: string;
+  workspaceId: string;
 };
 /** Where a captured note came from, kept so it can be traced back. */
 export type NoteOrigin = {
@@ -82,7 +92,11 @@ export const textDoc = (text: string): JSONContent => ({
     content: line ? [{ type: "text", text: line }] : undefined,
   })),
 });
-export function createNote(title = "", bucket: BucketId = "inbox"): Note {
+export function createNote(
+  title = "",
+  bucket: BucketId = "inbox",
+  workspaceId = "",
+): Note {
   const now = new Date().toISOString();
   return {
     id: crypto.randomUUID(),
@@ -95,6 +109,7 @@ export function createNote(title = "", bucket: BucketId = "inbox"): Note {
     updatedAt: now,
     completedAt: null,
     source: "web",
+    workspaceId,
   };
 }
 export function isNote(value: unknown): value is Note {
