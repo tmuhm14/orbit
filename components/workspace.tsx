@@ -363,27 +363,28 @@ export function Workspace({
               Your weekly review <ArrowUpRight size={14} />
             </span>
           </button>
-          <Link className="sidebar-export" href="/settings">
-            <Settings size={15} />
-            Settings
-          </Link>
-          {isAdmin && (
-            <Link className="sidebar-export" href="/admin">
-              <Shield size={15} />
-              Administration
+          <nav className="sidebar-links" aria-label="Account">
+            <Link className="sidebar-link" href="/settings">
+              <Settings size={15} />
+              Settings
             </Link>
-          )}
-          <button className="sidebar-export" onClick={exportNotes}>
-            <Download size={15} />
-            Export your notes
-            <ArrowUpRight size={13} />
-          </button>
-          <form action={signOut}>
-            <button className="account-signout" type="submit">
-              <LogOut size={15} />
-              Sign out
+            {isAdmin && (
+              <Link className="sidebar-link" href="/admin">
+                <Shield size={15} />
+                Administration
+              </Link>
+            )}
+            <button className="sidebar-link" onClick={exportNotes}>
+              <Download size={15} />
+              Export notes
             </button>
-          </form>
+            <form action={signOut}>
+              <button className="sidebar-link" type="submit">
+                <LogOut size={15} />
+                Sign out
+              </button>
+            </form>
+          </nav>
           <div className="profile">
             <div className="profile-avatar">{email[0]?.toUpperCase()}</div>
             <div>

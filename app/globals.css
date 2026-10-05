@@ -498,20 +498,40 @@ kbd {
   border-color: #9c8bbb38;
   background-color: #ffffff02;
 }
-.sidebar-export {
+.sidebar-links {
+  display: grid;
+  gap: 1px;
+  margin: 14px 0 12px;
+}
+.sidebar-links form {
+  margin: 0;
+}
+.sidebar-link {
   display: flex;
   align-items: center;
+  gap: 11px;
   width: 100%;
-  gap: 9px;
+  height: 34px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: #8f8d99;
   font-size: 12px;
-  color: #817e8b;
-  padding: 19px 11px;
+  text-align: left;
+  text-decoration: none;
 }
-.sidebar-export svg:last-child {
-  margin-left: auto;
+.sidebar-link > svg {
+  flex-shrink: 0;
+  opacity: 0.8;
 }
-.sidebar-export:hover {
-  color: var(--purple);
+.sidebar-link:hover,
+.sidebar-link:focus-visible {
+  background: #ffffff06;
+  color: var(--text);
+}
+.sidebar-link:hover > svg {
+  opacity: 1;
 }
 .profile {
   border-top: 1px solid var(--border);
@@ -2969,14 +2989,6 @@ main {
 }
 .auth-spinner {
   animation: auth-spin 1s linear infinite;
-}
-.account-signout {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  font-size: 12px;
-  padding: 8px 11px;
-  color: #a99ab9;
 }
 .account-email {
   max-width: 152px;
