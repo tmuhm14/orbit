@@ -4,11 +4,15 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   Check,
   ChevronDown,
+  Copy,
+  Mail,
+  RefreshCw,
   ChevronsUpDown,
   Pencil,
   Plus,
   Unlink,
 } from "lucide-react";
+import { inboundAddress } from "@/lib/email-address";
 import {
   WORKSPACE_COLORS,
   workspaceColor,
@@ -35,6 +39,9 @@ export function WorkspaceSwitcher({
   onCreate,
   onRename,
   onRecolor,
+  inboundDomain,
+  onNewAddress,
+  onCopied,
   onRouteSlack,
   onDisconnectSlack,
   onError,
@@ -49,6 +56,10 @@ export function WorkspaceSwitcher({
   onCreate: (name: string) => Promise<unknown>;
   onRename: (id: string, name: string) => Promise<unknown>;
   onRecolor: (id: string, color: string) => Promise<unknown>;
+  /** Receiving domain for email capture; null hides the email section. */
+  inboundDomain: string | null;
+  onNewAddress: (id: string) => Promise<unknown>;
+  onCopied: () => void;
   onRouteSlack: (
     link: SlackConnection,
     workspaceId: string,
@@ -235,6 +246,59 @@ export function WorkspaceSwitcher({
               />
             ))}
           </div>
+          {inboundDomain && current.inboxToken && (
+            <>
+              <div className="workspace-menu-label">
+                EMAIL INTO {current.name.toUpperCase()}
+              </div>
+              <div className="workspace-menu-email">
+                <Mail size={13} />
+                <code title="Forward or send email here">
+                  {inboundAddress(
+                    current.name,
+                    current.inboxToken,
+                    inboundDomain,
+                  )}
+                </code>
+                <button
+                  className="icon-button"
+                  aria-label="Copy email address"
+                  title="Copy"
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(
+                      inboundAddress(
+                        current.name,
+                        current.inboxToken,
+                        inboundDomain,
+                      ),
+                    );
+                    onCopied();
+                  }}
+                >
+                  <Copy size={13} />
+                </button>
+                <button
+                  className="icon-button"
+                  aria-label="Create a new email address"
+                  title="New address (the old one stops working)"
+                  disabled={busy}
+                  onClick={() => {
+                    if (
+                      confirm(
+                        "Create a new address for this workspace? Email sent to the current address will stop arriving.",
+                      )
+                    )
+                      run(
+                        () => onNewAddress(current.id),
+                        "Couldn't create a new address",
+                      );
+                  }}
+                >
+                  <RefreshCw size={13} />
+                </button>
+              </div>
+            </>
+          )}
           {slack.length > 0 && (
             <>
               <div className="workspace-menu-label">SLACK SENDS TO</div>

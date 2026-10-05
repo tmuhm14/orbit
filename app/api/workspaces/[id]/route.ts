@@ -25,7 +25,7 @@ export async function PATCH(
     .from("workspaces")
     .update(changes)
     .eq("id", id)
-    .select("id,name,position,color")
+    .select("id,name,position,color,inboxToken:inbox_token")
     .single();
   if (error) return json({ error: "Could not update workspace" }, 500);
   return json({ workspace: data });

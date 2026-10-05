@@ -61,7 +61,7 @@ export type Note = {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
-  source: "web" | "slack";
+  source: "web" | "slack" | "email";
   origin?: NoteOrigin | null;
   /** Empty only for notes from older browser storage, before workspaces. */
   workspaceId: string;
@@ -71,6 +71,8 @@ export type Workspace = {
   name: string;
   position: number;
   color: string | null;
+  /** Secret part of the workspace's email address. */
+  inboxToken: string;
 };
 /** A Slack account linked to this Orbit account, and where its captures go. */
 export type SlackConnection = {
@@ -80,15 +82,17 @@ export type SlackConnection = {
   workspaceId: string;
 };
 /** Where a captured note came from, kept so it can be traced back. */
-export type NoteOrigin = {
-  kind: "slack";
-  teamId: string;
-  channelId: string;
-  channelName?: string;
-  messageTs: string;
-  authorId?: string;
-  permalink?: string;
-};
+export type NoteOrigin =
+  | {
+      kind: "slack";
+      teamId: string;
+      channelId: string;
+      channelName?: string;
+      messageTs: string;
+      authorId?: string;
+      permalink?: string;
+    }
+  | { kind: "email"; from: string; subject?: string; messageId?: string };
 export const STORAGE_KEY = "orbit.notes.v1";
 export const textDoc = (text: string): JSONContent => ({
   type: "doc",
@@ -130,7 +134,10 @@ export function isNote(value: unknown): value is Note {
     typeof n.createdAt === "string" &&
     typeof n.updatedAt === "string" &&
     (n.completedAt === null || typeof n.completedAt === "string") &&
-    (n.source === undefined || n.source === "web" || n.source === "slack") &&
+    (n.source === undefined ||
+      n.source === "web" ||
+      n.source === "slack" ||
+      n.source === "email") &&
     n.content?.type === "doc"
   );
 }

@@ -19,7 +19,7 @@ export async function POST(request: Request) {
   const { data, error } = await auth.supabase
     .from("workspaces")
     .insert({ name: name.trim(), position: count ?? 0 })
-    .select("id,name,position,color")
+    .select("id,name,position,color,inboxToken:inbox_token")
     .single();
   if (error) return json({ error: "Could not create workspace" }, 500);
   return json({ workspace: data });

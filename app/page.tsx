@@ -26,10 +26,17 @@ export default async function Home() {
       initialNotes={error || !spaces ? null : data.map(fromRow)}
       initialWorkspaces={
         spaces?.workspaces ?? [
-          { id: "", name: "Personal", position: 0, color: null },
+          {
+            id: "",
+            name: "Personal",
+            position: 0,
+            color: null,
+            inboxToken: "",
+          },
         ]
       }
       initialSlack={spaces?.slack ?? []}
+      inboundDomain={process.env.RESEND_INBOUND_DOMAIN || null}
     />
   );
 }

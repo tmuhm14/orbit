@@ -26,6 +26,7 @@ Open http://localhost:3000. Use `npm run build` for a production build, `npm sta
 - Email/password accounts, confirmed email signup, password recovery, and sign-out through Supabase Auth.
 - Account storage in Supabase with row-level security, a one-time move of older browser-only notes, JSON export, and a GTD weekly-review guide.
 - Multiple workspaces (e.g. Personal and Waltz) under one login: switch from the colored pill in the top bar or the sidebar card. Each workspace has its own color (chosen in the switcher). Each has its own buckets, notes, tags, and search, and a note can be moved between workspaces from the editor.
+- Email capture: each workspace has a private address; forwarded emails land in its Inbox.
 - "Send to Orbit" Slack message shortcut that drops messages into the Inbox of the workspace that Slack is linked to.
 - Responsive layouts, keyboard shortcuts, and reduced-motion support.
 
@@ -93,9 +94,25 @@ Setup:
 3. Install the app to the workspace. Copy **Basic Information → Signing Secret** into `SLACK_SIGNING_SECRET` in Vercel (and `.env.local` for local work). `SUPABASE_SECRET_KEY` or `SUPABASE_SERVICE_ROLE_KEY` must also be set; the Vercel Supabase integration provides it.
 4. Redeploy. Slack can't reach `localhost`, so test locally through a tunnel (for example `ngrok http 3000`) and point the request URL at it temporarily.
 
+## Email capture
+
+Each workspace has a private address such as `waltz-a1b2c3d4e5f6@<id>.resend.app`, shown under **Email into …** in the workspace switcher (with Copy). Forward or send an email there and it lands in that workspace's Inbox, tagged `email`. The subject becomes the title (`Fwd:`/`FW:` removed), the body becomes the note, and attachments are listed by name but not imported. Duplicate deliveries are ignored by `Message-ID`. Email notes are marked `triage_status = 'pending'` for the organizing agent.
+
+The 12-character part of the address works like a password: anyone who knows it can add to that inbox. Use the refresh button next to the address to issue a new one; the old one stops working right away.
+
+How it works: Resend receives the mail and calls `POST /api/email/inbound` with a signed `email.received` webhook (Svix signature, 5-minute window). That webhook has metadata only, so the route fetches the email from `GET https://api.resend.com/emails/receiving/{id}` with your API key, finds the workspace from the recipient address, and inserts the note.
+
+Setup:
+
+1. Apply `supabase/migrations/20261008000000_email_capture.sql` (adds the `email` source and per-workspace `inbox_token`).
+2. In Resend: **Receiving** shows your receiving domain (`<id>.resend.app`, or add an MX record for a custom domain).
+3. **Webhooks → Add endpoint**: URL `https://orbit-swart-mu.vercel.app/api/email/inbound`, event `email.received`. Copy its signing secret (`whsec_…`).
+4. **API Keys**: create a key that can read received emails.
+5. In Vercel (and `.env.local`) set `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, and `RESEND_INBOUND_DOMAIN` (just the domain, e.g. `abc123.resend.app`), then redeploy.
+
 ## Validation
 
-- `npm test`: account isolation, explicit legacy import and browser-note moves, duplicate handling, invalid-data preservation, Slack signature checks, message conversion, and link tokens.
+- `npm test`: account isolation, explicit legacy import and browser-note moves, duplicate handling, invalid-data preservation, Slack signature checks, message conversion, link tokens, Resend webhook signatures, email address parsing, and email-to-note conversion.
 - `npm run build`: production compilation and type checking.
 - `ORBIT_AUTH_INTEGRATION=1 node --env-file=.env.local tests/auth-smoke.mjs`: opt-in provider/server checks against a running local app. Set `ORBIT_TEST_URL` for a different origin. Requires a Supabase admin key and creates/removes one disposable test account; sends no emails. Checks anonymous access, invalid passwords, verified sessions, forged cookies, and sign-out.
 
