@@ -1,20 +1,13 @@
 import { redirect } from "next/navigation";
-import { Workspace } from "@/components/workspace";
 import { createClient } from "@/lib/supabase/server";
 import { authConfig } from "@/lib/supabase/config";
-
-export default async function Home() {
+import { AuthForm } from "@/components/auth-form";
+export default async function ResetPassword() {
   if (!authConfig()) redirect("/login");
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-  return (
-    <Workspace
-      key={user.id}
-      userId={user.id}
-      email={user.email || "Your account"}
-    />
-  );
+  if (!user) redirect("/login?error=link");
+  return <AuthForm configured initialMode="reset" />;
 }

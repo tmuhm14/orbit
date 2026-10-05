@@ -66,12 +66,10 @@ export type Note = {
 export const STORAGE_KEY = "orbit.notes.v1";
 export const textDoc = (text: string): JSONContent => ({
   type: "doc",
-  content: text
-    .split("\n")
-    .map((line) => ({
-      type: "paragraph",
-      content: line ? [{ type: "text", text: line }] : undefined,
-    })),
+  content: text.split("\n").map((line) => ({
+    type: "paragraph",
+    content: line ? [{ type: "text", text: line }] : undefined,
+  })),
 });
 export function createNote(title = "", bucket: BucketId = "inbox"): Note {
   const now = new Date().toISOString();
@@ -169,9 +167,33 @@ export function isNote(value: unknown): value is Note {
   );
 }
 export const noteRepository = {
-  load(): Note[] {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored === null) return exampleNotes();
+  hasLegacyNotes(userId: string): boolean {
+    const owner = localStorage.getItem(`${STORAGE_KEY}:legacy-owner`);
+    return (
+      localStorage.getItem(STORAGE_KEY) !== null &&
+      (!owner || owner === userId) &&
+      localStorage.getItem(`${STORAGE_KEY}:${userId}:imported`) !== "true"
+    );
+  },
+  importLegacy(userId: string, current: Note[]): Note[] {
+    if (!this.hasLegacyNotes(userId)) return current;
+    const legacy: unknown = JSON.parse(
+      localStorage.getItem(STORAGE_KEY) || "[]",
+    );
+    if (!Array.isArray(legacy) || !legacy.every(isNote))
+      throw new Error(
+        "Existing notes could not be read. The original data is unchanged.",
+      );
+    const ids = new Set(current.map((note) => note.id));
+    const merged = [...current, ...legacy.filter((note) => !ids.has(note.id))];
+    this.save(userId, merged);
+    localStorage.setItem(`${STORAGE_KEY}:legacy-owner`, userId);
+    localStorage.setItem(`${STORAGE_KEY}:${userId}:imported`, "true");
+    return merged;
+  },
+  load(userId: string): Note[] {
+    const stored = localStorage.getItem(`${STORAGE_KEY}:${userId}`);
+    if (stored === null) return [];
     const parsed: unknown = JSON.parse(stored);
     if (!Array.isArray(parsed) || !parsed.every(isNote))
       throw new Error(
@@ -179,7 +201,7 @@ export const noteRepository = {
       );
     return parsed;
   },
-  save(notes: Note[]) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
+  save(userId: string, notes: Note[]) {
+    localStorage.setItem(`${STORAGE_KEY}:${userId}`, JSON.stringify(notes));
   },
 };

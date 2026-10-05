@@ -5,7 +5,13 @@ import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   Bold,
@@ -109,7 +115,9 @@ export function NoteEditor({
   const dialogRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
-  const [menuPosition, setMenuPosition] = useState<CSSProperties>({ visibility: "hidden" });
+  const [menuPosition, setMenuPosition] = useState<CSSProperties>({
+    visibility: "hidden",
+  });
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const onUpdateRef = useRef(onUpdate);
   onUpdateRef.current = onUpdate;
@@ -194,7 +202,11 @@ export function NoteEditor({
       const origin = dialog.getBoundingClientRect();
       const viewport = window.visualViewport;
       const top = Math.max(bounds.top, viewport?.offsetTop ?? 0) + 8;
-      const bottom = Math.min(bounds.bottom, (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight)) - 8;
+      const bottom =
+        Math.min(
+          bounds.bottom,
+          (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight),
+        ) - 8;
       if (caret.bottom < top || caret.top > bottom) {
         setMenuPosition({ visibility: "hidden" });
         return;
@@ -205,11 +217,17 @@ export function NoteEditor({
       const openBelow = below >= desiredHeight || below >= above;
       const height = Math.min(desiredHeight, openBelow ? below : above);
       const width = Math.min(285, bounds.width - 24);
-      const left = Math.max(bounds.left + 12, Math.min(caret.left, bounds.right - width - 12));
+      const left = Math.max(
+        bounds.left + 12,
+        Math.min(caret.left, bounds.right - width - 12),
+      );
       setMenuPosition({
         visibility: "visible",
         left: left - origin.left - dialog.clientLeft,
-        top: (openBelow ? caret.bottom + 6 : caret.top - height - 6) - origin.top - dialog.clientTop,
+        top:
+          (openBelow ? caret.bottom + 6 : caret.top - height - 6) -
+          origin.top -
+          dialog.clientTop,
         width,
         maxHeight: height,
       });
@@ -235,8 +253,12 @@ export function NoteEditor({
     const option = menu?.querySelector<HTMLElement>('[aria-selected="true"]');
     if (!menu || !option) return;
     if (option.offsetTop < menu.scrollTop) menu.scrollTop = option.offsetTop;
-    else if (option.offsetTop + option.offsetHeight > menu.scrollTop + menu.clientHeight)
-      menu.scrollTop = option.offsetTop + option.offsetHeight - menu.clientHeight;
+    else if (
+      option.offsetTop + option.offsetHeight >
+      menu.scrollTop + menu.clientHeight
+    )
+      menu.scrollTop =
+        option.offsetTop + option.offsetHeight - menu.clientHeight;
   }, [commandIndex, slash]);
 
   useEffect(() => {
@@ -428,50 +450,52 @@ export function NoteEditor({
             </div>
             <div className="editor-content-wrap">
               <EditorContent editor={editor} />
-              {slash && dialogRef.current && createPortal(
-                <div
-                  ref={slashMenuRef}
-                  style={menuPosition}
-                  className="slash-menu"
-                  role="listbox"
-                  aria-label="Slash commands"
-                >
-                  <div className="slash-menu-label">
-                    ADD A BLOCK <CornerDownLeft size={12} />
-                  </div>
-                  {filtered.length ? (
-                    filtered.map((c, i) => (
-                      <button
-                        role="option"
-                        aria-selected={commandIndex === i}
-                        className={commandIndex === i ? "selected" : ""}
-                        key={c.name}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => {
-                          editor
-                            ?.chain()
-                            .focus()
-                            .deleteRange({ from: slash.from, to: slash.to })
-                            .run();
-                          if (editor) c.run(editor);
-                          setSlash(null);
-                        }}
-                      >
-                        <span className="command-icon">
-                          <c.icon size={18} />
-                        </span>
-                        <span>
-                          <strong>{c.name}</strong>
-                          <small>{c.detail}</small>
-                        </span>
-                      </button>
-                    ))
-                  ) : (
-                    <p>No matching blocks.</p>
-                  )}
-                </div>,
-                dialogRef.current,
-              )}
+              {slash &&
+                dialogRef.current &&
+                createPortal(
+                  <div
+                    ref={slashMenuRef}
+                    style={menuPosition}
+                    className="slash-menu"
+                    role="listbox"
+                    aria-label="Slash commands"
+                  >
+                    <div className="slash-menu-label">
+                      ADD A BLOCK <CornerDownLeft size={12} />
+                    </div>
+                    {filtered.length ? (
+                      filtered.map((c, i) => (
+                        <button
+                          role="option"
+                          aria-selected={commandIndex === i}
+                          className={commandIndex === i ? "selected" : ""}
+                          key={c.name}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            editor
+                              ?.chain()
+                              .focus()
+                              .deleteRange({ from: slash.from, to: slash.to })
+                              .run();
+                            if (editor) c.run(editor);
+                            setSlash(null);
+                          }}
+                        >
+                          <span className="command-icon">
+                            <c.icon size={18} />
+                          </span>
+                          <span>
+                            <strong>{c.name}</strong>
+                            <small>{c.detail}</small>
+                          </span>
+                        </button>
+                      ))
+                    ) : (
+                      <p>No matching blocks.</p>
+                    )}
+                  </div>,
+                  dialogRef.current,
+                )}
             </div>
           </div>
         </div>

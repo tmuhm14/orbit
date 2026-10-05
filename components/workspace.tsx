@@ -24,6 +24,7 @@ import {
   SlidersHorizontal,
   CheckCircle2,
   Feather,
+  LogOut,
 } from "lucide-react";
 import {
   BUCKETS,
@@ -34,6 +35,7 @@ import {
   type BucketId,
 } from "@/lib/notes";
 import { NoteEditor } from "./note-editor";
+import { signOut } from "@/app/auth/actions";
 
 const icons = {
   inbox: Inbox,
@@ -45,7 +47,15 @@ const icons = {
 };
 type View = "overview" | BucketId | "completed";
 
-export function Workspace() {
+export function Workspace({
+  userId,
+  email,
+}: {
+  userId: string;
+  email: string;
+}) {
+  const [legacyAvailable, setLegacyAvailable] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [notes, setNotes] = useState<Note[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState(false);
@@ -69,22 +79,23 @@ export function Workspace() {
   notesRef.current = notes;
   useEffect(() => {
     try {
-      setNotes(noteRepository.load());
+      setNotes(noteRepository.load(userId));
+      setLegacyAvailable(noteRepository.hasLegacyNotes(userId));
     } catch {
       setLoadError(true);
       setStorageError(true);
     }
     setLoaded(true);
-  }, []);
+  }, [userId]);
   useEffect(() => {
     if (!loaded || loadError) return;
     try {
-      noteRepository.save(notes);
+      noteRepository.save(userId, notes);
       setStorageError(false);
     } catch {
       setStorageError(true);
     }
-  }, [notes, loaded, loadError]);
+  }, [notes, loaded, loadError, userId]);
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(""), 3500);
@@ -111,6 +122,53 @@ export function Workspace() {
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [selected]);
+  useEffect(() => {
+    let active = true;
+    async function checkSession() {
+      try {
+        const response = await fetch("/auth/session", { cache: "no-store" });
+        if (response.status !== 401 && !response.ok) return;
+        const data = await response.json();
+        if (active && data.userId !== userId) {
+          setSessionExpired(true);
+          window.location.replace("/login");
+        }
+      } catch {
+        /* Offline notes remain usable until the session can be checked. */
+      }
+    }
+    function onStorage(event: StorageEvent) {
+      if (event.key === "orbit.auth.changed") void checkSession();
+    }
+    function onVisible() {
+      if (!document.hidden) void checkSession();
+    }
+    try {
+      localStorage.setItem("orbit.auth.changed", String(Date.now()));
+    } catch {
+      /* Storage failure is surfaced by the note repository. */
+    }
+    const interval = setInterval(checkSession, 60000);
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("focus", onVisible);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      active = false;
+      clearInterval(interval);
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", onVisible);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [userId]);
+  function importExistingNotes() {
+    try {
+      setNotes(noteRepository.importLegacy(userId, notes));
+      setLegacyAvailable(false);
+      setToast("Existing notes imported into your account");
+    } catch {
+      setToast("Unable to import. Your original notes are unchanged.");
+    }
+  }
   const activeNotes = notes.filter((n) => !n.completedAt);
   const completed = notes.filter((n) => n.completedAt);
   const bucket = BUCKETS.find((b) => b.id === view);
@@ -205,6 +263,12 @@ export function Workspace() {
   }
   const count = (id: BucketId) =>
     activeNotes.filter((n) => n.bucket === id).length;
+  if (sessionExpired)
+    return (
+      <div className="session-cover" role="status">
+        Returning to sign in…
+      </div>
+    );
   return (
     <div className="app-shell">
       {sidebarOpen && (
@@ -304,10 +368,18 @@ export function Workspace() {
             Export your notes
             <ArrowUpRight size={13} />
           </button>
+          <form action={signOut}>
+            <button className="account-signout" type="submit">
+              <LogOut size={15} />
+              Sign out
+            </button>
+          </form>
           <div className="profile">
-            <div className="profile-avatar">Y</div>
+            <div className="profile-avatar">{email[0]?.toUpperCase()}</div>
             <div>
-              <strong>Your personal space</strong>
+              <strong className="account-email" title={email}>
+                {email}
+              </strong>
               <small>
                 <span
                   className={storageError ? "status-dot error" : "status-dot"}
@@ -368,6 +440,28 @@ export function Workspace() {
           </div>
         </header>
         <main>
+          {legacyAvailable && !loadError && (
+            <div className="legacy-import">
+              <p>
+                Have notes from before sign-in? Import this browser’s existing
+                notes into this account.
+              </p>
+              <div>
+                <button
+                  className="text-button"
+                  onClick={() => setLegacyAvailable(false)}
+                >
+                  Not now
+                </button>
+                <button
+                  className="secondary-button"
+                  onClick={importExistingNotes}
+                >
+                  Import my notes
+                </button>
+              </div>
+            </div>
+          )}
           {storageError && (
             <div className="storage-warning" role="alert">
               {loadError
