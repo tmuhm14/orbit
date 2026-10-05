@@ -1,5 +1,9 @@
 import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  logIntegrationEvent,
+  type IntegrationEvent,
+} from "@/lib/integration-log";
 import { siteUrl } from "@/lib/supabase/config";
 import {
   SHORTCUT_CALLBACK_ID,
@@ -56,6 +60,9 @@ export async function POST(request: Request) {
       });
     });
 
+  const log = (event: Omit<IntegrationEvent, "source">) =>
+    after(() => logIntegrationEvent(admin, { source: "slack", ...event }));
+
   const { data: link, error: linkError } = await admin
     .from("slack_links")
     .select("user_id,workspace_id")
@@ -63,10 +70,15 @@ export async function POST(request: Request) {
     .eq("slack_user_id", action.user.id)
     .maybeSingle();
   if (linkError) {
+    log({ status: "error", detail: `Link lookup: ${linkError.message}` });
     reply("Orbit couldn't save that message right now. Please try again.");
     return new Response(null, { status: 200 });
   }
   if (!link) {
+    log({
+      status: "unlinked",
+      detail: `Slack ${action.team.domain || action.team.id} not connected yet`,
+    });
     const token = signLinkToken(
       {
         teamId: action.team.id,
@@ -104,11 +116,15 @@ export async function POST(request: Request) {
       { onConflict: "user_id,source_ref", ignoreDuplicates: true },
     )
     .select("id");
-  if (error)
+  const owner = { userId: link.user_id, workspaceId: link.workspace_id };
+  if (error) {
+    log({ ...owner, status: "error", detail: `Insert: ${error.message}` });
     reply("Orbit couldn't save that message right now. Please try again.");
-  else if (!inserted.length)
+  } else if (!inserted.length) {
+    log({ ...owner, status: "duplicate" });
     reply("That message is already in your Orbit inbox.");
-  else {
+  } else {
+    log({ ...owner, status: "captured" });
     const { data: workspace } = await admin
       .from("workspaces")
       .select("name")

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   Orbit,
   Search,
@@ -25,6 +26,8 @@ import {
   CheckCircle2,
   Feather,
   LogOut,
+  Settings,
+  Shield,
 } from "lucide-react";
 import {
   BUCKETS,
@@ -62,6 +65,7 @@ export function Workspace({
   initialWorkspaces,
   initialSlack,
   inboundDomain,
+  isAdmin,
 }: {
   userId: string;
   email: string;
@@ -69,6 +73,7 @@ export function Workspace({
   initialWorkspaces: WorkspaceInfo[];
   initialSlack: SlackConnection[];
   inboundDomain: string | null;
+  isAdmin: boolean;
 }) {
   const {
     notes,
@@ -358,17 +363,28 @@ export function Workspace({
               Your weekly review <ArrowUpRight size={14} />
             </span>
           </button>
-          <button className="sidebar-export" onClick={exportNotes}>
-            <Download size={15} />
-            Export your notes
-            <ArrowUpRight size={13} />
-          </button>
-          <form action={signOut}>
-            <button className="account-signout" type="submit">
-              <LogOut size={15} />
-              Sign out
+          <nav className="sidebar-links" aria-label="Account">
+            <Link className="sidebar-link" href="/settings">
+              <Settings size={15} />
+              Settings
+            </Link>
+            {isAdmin && (
+              <Link className="sidebar-link" href="/admin">
+                <Shield size={15} />
+                Administration
+              </Link>
+            )}
+            <button className="sidebar-link" onClick={exportNotes}>
+              <Download size={15} />
+              Export notes
             </button>
-          </form>
+            <form action={signOut}>
+              <button className="sidebar-link" type="submit">
+                <LogOut size={15} />
+                Sign out
+              </button>
+            </form>
+          </nav>
           <div className="profile">
             <div className="profile-avatar">{email[0]?.toUpperCase()}</div>
             <div>

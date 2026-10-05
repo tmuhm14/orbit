@@ -94,6 +94,13 @@ Setup:
 3. Install the app to the workspace. Copy **Basic Information → Signing Secret** into `SLACK_SIGNING_SECRET` in Vercel (and `.env.local` for local work). `SUPABASE_SECRET_KEY` or `SUPABASE_SERVICE_ROLE_KEY` must also be set; the Vercel Supabase integration provides it.
 4. Redeploy. Slack can't reach `localhost`, so test locally through a tunnel (for example `ngrok http 3000`) and point the request URL at it temporarily.
 
+## Settings and administration
+
+- **Settings** (`/settings`, every user, linked from the sidebar): rename, recolor, reorder, add, and delete workspaces (deleting requires typing the name and removes that workspace's notes; the last workspace can't be deleted); copy or replace each workspace's email address; re-route or disconnect Slack; change password (requires the current one); export all notes.
+- **Administration** (`/admin`, owner only): system health (which integrations are configured), all users with their workspaces, note counts by source, and pending triage; create accounts with a temporary password (sign-up is closed while account email is off), set a user's password, disable or re-enable accounts; integration URLs to paste into Slack and Resend; and the last 50 Slack/email capture outcomes, including failures, from `integration_events`.
+
+Access to `/admin` comes from `ORBIT_ADMIN_EMAILS` (comma-separated). Everyone else gets a 404, and every admin action checks again on the server. Admin reads and writes use the server-only Supabase secret key. Secrets are never shown in the UI; change them in Vercel.
+
 ## Email capture
 
 Each workspace has a private address such as `waltz-a1b2c3d4e5f6@<id>.resend.app`, shown under **Email into …** in the workspace switcher (with Copy). Forward or send an email there and it lands in that workspace's Inbox, tagged `email`. The subject becomes the title (`Fwd:`/`FW:` removed), the body becomes the note, and attachments are listed by name but not imported. Duplicate deliveries are ignored by `Message-ID`. Email notes are marked `triage_status = 'pending'` for the organizing agent.
