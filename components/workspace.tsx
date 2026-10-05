@@ -30,11 +30,14 @@ import {
   BUCKETS,
   createNote,
   textDoc,
-  noteRepository,
   type Note,
   type BucketId,
 } from "@/lib/notes";
 import { NoteEditor } from "./note-editor";
+import { GuideDialog } from "./guide-dialog";
+import { SearchDialog } from "./search-dialog";
+import { useNotes } from "./use-notes";
+import { useSessionWatch } from "./use-session-watch";
 import { signOut } from "@/app/auth/actions";
 
 const icons = {
@@ -54,12 +57,17 @@ export function Workspace({
   userId: string;
   email: string;
 }) {
-  const [legacyAvailable, setLegacyAvailable] = useState(false);
-  const [sessionExpired, setSessionExpired] = useState(false);
-  const [notes, setNotes] = useState<Note[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  const [loadError, setLoadError] = useState(false);
-  const [storageError, setStorageError] = useState(false);
+  const {
+    notes,
+    setNotes,
+    loaded,
+    loadError,
+    storageError,
+    legacyAvailable,
+    dismissLegacy,
+    importLegacy,
+  } = useNotes(userId);
+  const sessionExpired = useSessionWatch(userId);
   const [view, setView] = useState<View>("overview");
   const [selected, setSelected] = useState<string | null>(null);
   const [capture, setCapture] = useState("");
@@ -75,27 +83,6 @@ export function Workspace({
   const [guideOpen, setGuideOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const captureRef = useRef<HTMLTextAreaElement>(null);
-  const notesRef = useRef(notes);
-  notesRef.current = notes;
-  useEffect(() => {
-    try {
-      setNotes(noteRepository.load(userId));
-      setLegacyAvailable(noteRepository.hasLegacyNotes(userId));
-    } catch {
-      setLoadError(true);
-      setStorageError(true);
-    }
-    setLoaded(true);
-  }, [userId]);
-  useEffect(() => {
-    if (!loaded || loadError) return;
-    try {
-      noteRepository.save(userId, notes);
-      setStorageError(false);
-    } catch {
-      setStorageError(true);
-    }
-  }, [notes, loaded, loadError, userId]);
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(""), 3500);
@@ -106,8 +93,7 @@ export function Workspace({
       if (selected) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setSearchOpen(true);
-        setTimeout(() => searchRef.current?.focus(), 0);
+        openSearch();
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
         event.preventDefault();
@@ -122,52 +108,12 @@ export function Workspace({
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [selected]);
-  useEffect(() => {
-    let active = true;
-    async function checkSession() {
-      try {
-        const response = await fetch("/auth/session", { cache: "no-store" });
-        if (response.status !== 401 && !response.ok) return;
-        const data = await response.json();
-        if (active && data.userId !== userId) {
-          setSessionExpired(true);
-          window.location.replace("/login");
-        }
-      } catch {
-        /* Offline notes remain usable until the session can be checked. */
-      }
-    }
-    function onStorage(event: StorageEvent) {
-      if (event.key === "orbit.auth.changed") void checkSession();
-    }
-    function onVisible() {
-      if (!document.hidden) void checkSession();
-    }
-    try {
-      localStorage.setItem("orbit.auth.changed", String(Date.now()));
-    } catch {
-      /* Storage failure is surfaced by the note repository. */
-    }
-    const interval = setInterval(checkSession, 60000);
-    window.addEventListener("storage", onStorage);
-    window.addEventListener("focus", onVisible);
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      active = false;
-      clearInterval(interval);
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener("focus", onVisible);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [userId]);
   function importExistingNotes() {
-    try {
-      setNotes(noteRepository.importLegacy(userId, notes));
-      setLegacyAvailable(false);
-      setToast("Existing notes imported into your account");
-    } catch {
-      setToast("Unable to import. Your original notes are unchanged.");
-    }
+    setToast(
+      importLegacy()
+        ? "Existing notes imported into your account"
+        : "Unable to import. Your original notes are unchanged.",
+    );
   }
   const activeNotes = notes.filter((n) => !n.completedAt);
   const completed = notes.filter((n) => n.completedAt);
@@ -199,6 +145,10 @@ export function Workspace({
           ? a.updatedAt.localeCompare(b.updatedAt)
           : b.updatedAt.localeCompare(a.updatedAt),
     );
+  function openSearch() {
+    setSearchOpen(true);
+    setTimeout(() => searchRef.current?.focus(), 0);
+  }
   function navigate(next: View) {
     setView(next);
     setSearch("");
@@ -245,7 +195,7 @@ export function Workspace({
           {
             version: 1,
             exportedAt: new Date().toISOString(),
-            notes: notesRef.current,
+            notes,
           },
           null,
           2,
@@ -302,13 +252,7 @@ export function Workspace({
           </div>
           <span className="workspace-spark">✧</span>
         </div>
-        <button
-          className="search-trigger"
-          onClick={() => {
-            setSearchOpen(true);
-            setTimeout(() => searchRef.current?.focus(), 0);
-          }}
-        >
+        <button className="search-trigger" onClick={openSearch}>
           <Search size={16} />
           <span>Find anything</span>
           <kbd>⌘ K</kbd>
@@ -323,7 +267,7 @@ export function Workspace({
             <span className="nav-active-dot" />
           </button>
           <div className="nav-label">
-            YOUR BUCKETS <span>6</span>
+            YOUR BUCKETS <span>{BUCKETS.length}</span>
           </div>
           {BUCKETS.map((b) => {
             const Icon = icons[b.icon];
@@ -447,10 +391,7 @@ export function Workspace({
                 notes into this account.
               </p>
               <div>
-                <button
-                  className="text-button"
-                  onClick={() => setLegacyAvailable(false)}
-                >
+                <button className="text-button" onClick={dismissLegacy}>
                   Not now
                 </button>
                 <button
@@ -819,9 +760,7 @@ export function Workspace({
               <Orbit size={15} />A place for your thoughts. Space for your life.
             </span>
             <span>
-              {notes.some((n) => n.id.startsWith("welcome-"))
-                ? "Includes editable example notes"
-                : `${activeNotes.length} thoughts in orbit`}
+              {activeNotes.length} thoughts in orbit
               <span className="footer-star">✧</span>
             </span>
           </footer>
@@ -842,119 +781,14 @@ export function Workspace({
         />
       )}
       {searchOpen && (
-        <div
-          className="modal-backdrop search-backdrop"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setSearchOpen(false);
-          }}
-        >
-          <div
-            className="search-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Search workspace"
-          >
-            <Search size={22} />
-            <input
-              ref={searchRef}
-              placeholder="Find a thought, tag, or idea…"
-              value={search}
-              aria-label="Search workspace"
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") setSearchOpen(false);
-                if (e.key === "Tab") {
-                  e.preventDefault();
-                  setSearchOpen(false);
-                }
-              }}
-            />
-            <button
-              className="icon-button"
-              aria-label="Close search"
-              onClick={() => setSearchOpen(false)}
-            >
-              <X size={18} />
-            </button>
-            <div className="search-help">
-              Search across all your buckets{" "}
-              <span>
-                <kbd>↵</kbd> to see results <kbd>esc</kbd> to close
-              </span>
-            </div>
-          </div>
-        </div>
+        <SearchDialog
+          inputRef={searchRef}
+          value={search}
+          onChange={setSearch}
+          onClose={() => setSearchOpen(false)}
+        />
       )}
-      {guideOpen && (
-        <div
-          className="modal-backdrop"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setGuideOpen(false);
-          }}
-        >
-          <div
-            className="guide-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="guide-title"
-          >
-            <button
-              autoFocus
-              className="icon-button guide-close"
-              onKeyDown={(e) => {
-                if (e.key === "Tab") e.preventDefault();
-              }}
-              aria-label="Close guide"
-              onClick={() => setGuideOpen(false)}
-            >
-              <X size={21} />
-            </button>
-            <Sparkles className="purple" size={30} />
-            <div className="eyebrow">A SMALL RESET</div>
-            <h2 id="guide-title">Make room for what matters.</h2>
-            <p>
-              Getting Things Done starts with a trusted place to put what is on
-              your mind. Come back to these steps each week.
-            </p>
-            <ol>
-              {[
-                [
-                  "Capture",
-                  "Collect loose thoughts, commitments, and ideas in your Inbox.",
-                ],
-                [
-                  "Clarify",
-                  "Ask: is there an action here? Name the next concrete step.",
-                ],
-                [
-                  "Organize",
-                  "Use Next actions for doable steps, Projects for bigger outcomes, and Waiting for for anything delegated. Save ideas in Someday / maybe and useful information in Reference.",
-                ],
-                [
-                  "Reflect",
-                  "Review every bucket. Update what has changed, delete what no longer matters, and check each project has a next action.",
-                ],
-                [
-                  "Engage",
-                  "Choose a next action that fits your time, energy, and priorities.",
-                ],
-              ].map(([title, body], i) => (
-                <li key={title}>
-                  <span>{i + 1}</span>
-                  <div>
-                    <h3>{title}</h3>
-                    <p>{body}</p>
-                  </div>
-                </li>
-              ))}
-            </ol>
-            <div className="guide-tip">
-              Try <kbd>⌘ / Ctrl K</kbd> to search, <kbd>⌘ / Ctrl J</kbd> to
-              capture, and <kbd>/</kbd> inside a note.
-            </div>
-          </div>
-        </div>
-      )}
+      {guideOpen && <GuideDialog onClose={() => setGuideOpen(false)} />}
       {toast && (
         <div className="toast" role="status">
           <span>

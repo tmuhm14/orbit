@@ -6,6 +6,8 @@ A calm, space-inspired Getting Things Done workspace built with Next.js, React, 
 
 ## Run locally
 
+Requires Node.js 22.6 or newer (see `.nvmrc`); the test runner uses built-in TypeScript stripping.
+
 ```sh
 npm install
 cp .env.example .env.local
@@ -70,4 +72,4 @@ Official framework guidance: https://vercel.com/docs/frameworks/full-stack/nextj
 3. **Inbound capture.** Accept verified email/SMS/webhook events through authenticated server routes; track source IDs for idempotency and preserve the original input.
 4. **Agent organization.** Have an agent propose formatting, tags, and a bucket, with confidence, provenance, and an audit trail. Introduce user-approved external actions separately.
 
-The current `Note` model separates stable IDs, rich content, searchable plain text, bucket, tags, timestamps, completion, and capture source. Buckets and storage access are defined in `lib/notes.ts`; workspace behavior and note editing are separate components.
+The current `Note` model separates stable IDs, rich content, searchable plain text, bucket, tags, timestamps, completion, and capture source. Buckets and storage access are defined in `lib/notes.ts`, and `components/use-notes.ts` is the only place the workspace loads or saves notes, so swapping localStorage for a database touches those two files. Session checks live in `components/use-session-watch.ts`; the workspace, note editor, search, and weekly-review dialogs are separate components.

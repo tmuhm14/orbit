@@ -16,6 +16,7 @@ import {
   updatePassword,
   type AuthState,
 } from "@/app/auth/actions";
+import { announceAuthChange } from "@/lib/session";
 
 type Mode = "login" | "signup" | "forgot" | "reset";
 export function AuthForm({
@@ -32,13 +33,7 @@ export function AuthForm({
   initialError?: string;
 }) {
   const [mode, setMode] = useState<Mode>(initialMode);
-  useEffect(() => {
-    try {
-      localStorage.setItem("orbit.auth.changed", String(Date.now()));
-    } catch {
-      /* Authentication works without local storage. */
-    }
-  }, []);
+  useEffect(announceAuthChange, []);
   return (
     <main className="auth-page">
       <div className="auth-orbits" aria-hidden="true">
@@ -253,7 +248,10 @@ function AuthFields({
       </form>
       <div className="auth-switch">
         {!emailEnabled ? (
-          <p>Accounts are created by the workspace owner. Contact them for access or password help.</p>
+          <p>
+            Accounts are created by the workspace owner. Contact them for access
+            or password help.
+          </p>
         ) : mode === "login" ? (
           <>
             New here?{" "}
