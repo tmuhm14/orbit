@@ -32,6 +32,7 @@ import {
   textDoc,
   type Note,
   type BucketId,
+  workspaceColor,
   type SlackConnection,
   type Workspace as WorkspaceInfo,
 } from "@/lib/notes";
@@ -41,7 +42,7 @@ import { SearchDialog } from "./search-dialog";
 import { useNotes } from "./use-notes";
 import { useSessionWatch } from "./use-session-watch";
 import { useWorkspaces } from "./use-workspaces";
-import { WorkspaceSwitcher } from "./workspace-switcher";
+import { WorkspaceSwitcher, spaceStyle } from "./workspace-switcher";
 import { signOut } from "@/app/auth/actions";
 
 const icons = {
@@ -172,6 +173,31 @@ export function Workspace({
       notes.filter((n) => n.workspaceId === w.id && !n.completedAt).length,
     ]),
   );
+  const switcherProps = {
+    workspaces: spaces.workspaces,
+    current: spaces.current,
+    counts: notesPerWorkspace,
+    slack: spaces.slack,
+    onSelect: switchWorkspace,
+    onCreate: async (name: string) => {
+      await spaces.create(name);
+      navigate("overview");
+      setToast(`Created ${name}`);
+    },
+    onRename: spaces.rename,
+    onRecolor: spaces.recolor,
+    onRouteSlack: async (link: SlackConnection, id: string) => {
+      await spaces.routeSlack(link, id);
+      setToast(
+        `Slack now sends to ${spaces.workspaces.find((w) => w.id === id)?.name}`,
+      );
+    },
+    onDisconnectSlack: async (link: SlackConnection) => {
+      await spaces.disconnectSlack(link);
+      setToast("Slack disconnected");
+    },
+    onError: setToast,
+  };
   function navigate(next: View) {
     setView(next);
     setSearch("");
@@ -243,7 +269,10 @@ export function Workspace({
       </div>
     );
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      style={spaceStyle(workspaceColor(spaces.workspaces, workspaceId))}
+    >
       {sidebarOpen && (
         <div
           className="sidebar-backdrop"
@@ -265,30 +294,7 @@ export function Workspace({
           </span>
           <span className="beta-label">BETA</span>
         </button>
-        <WorkspaceSwitcher
-          workspaces={spaces.workspaces}
-          current={spaces.current}
-          counts={notesPerWorkspace}
-          slack={spaces.slack}
-          onSelect={switchWorkspace}
-          onCreate={async (name) => {
-            await spaces.create(name);
-            navigate("overview");
-            setToast(`Created ${name}`);
-          }}
-          onRename={spaces.rename}
-          onRouteSlack={async (link, id) => {
-            await spaces.routeSlack(link, id);
-            setToast(
-              `Slack now sends to ${spaces.workspaces.find((w) => w.id === id)?.name}`,
-            );
-          }}
-          onDisconnectSlack={async (link) => {
-            await spaces.disconnectSlack(link);
-            setToast("Slack disconnected");
-          }}
-          onError={setToast}
-        />
+        <WorkspaceSwitcher {...switcherProps} />
         <button className="search-trigger" onClick={openSearch}>
           <Search size={16} />
           <span>Find anything</span>
@@ -393,10 +399,7 @@ export function Workspace({
             >
               <PanelLeftOpen size={20} />
             </button>
-            <span className="breadcrumb-orbit">
-              <Orbit size={16} />
-            </span>
-            <span>{spaces.current.name}</span>
+            <WorkspaceSwitcher variant="pill" {...switcherProps} />
             <ChevronRight size={13} />
             <strong>
               {search
@@ -406,10 +409,6 @@ export function Workspace({
             </strong>
           </div>
           <div className="topbar-right">
-            <span className="local-label">
-              <span className="status-dot" />
-              {spaces.current.name}
-            </span>
             <button
               className="primary-button small"
               onClick={newNote}

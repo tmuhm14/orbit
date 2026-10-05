@@ -1,10 +1,32 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Check, ChevronsUpDown, Pencil, Plus, Unlink } from "lucide-react";
-import type { SlackConnection, Workspace } from "@/lib/notes";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  Check,
+  ChevronDown,
+  ChevronsUpDown,
+  Pencil,
+  Plus,
+  Unlink,
+} from "lucide-react";
+import {
+  WORKSPACE_COLORS,
+  workspaceColor,
+  type WorkspaceColor,
+  type SlackConnection,
+  type Workspace,
+} from "@/lib/notes";
+
+/** Sets --space to the workspace's accent for an element and its children. */
+export const spaceStyle = (color: WorkspaceColor) =>
+  ({
+    "--space": WORKSPACE_COLORS[color].accent,
+    "--space-ink": WORKSPACE_COLORS[color].ink,
+    "--space-line": WORKSPACE_COLORS[color].line,
+  }) as CSSProperties;
 
 export function WorkspaceSwitcher({
+  variant = "sidebar",
   workspaces,
   current,
   counts,
@@ -12,10 +34,13 @@ export function WorkspaceSwitcher({
   onSelect,
   onCreate,
   onRename,
+  onRecolor,
   onRouteSlack,
   onDisconnectSlack,
   onError,
 }: {
+  /** "pill": the compact top-bar indicator; "sidebar": the full card. */
+  variant?: "sidebar" | "pill";
   workspaces: Workspace[];
   current: Workspace;
   counts: Record<string, number>;
@@ -23,6 +48,7 @@ export function WorkspaceSwitcher({
   onSelect: (id: string) => void;
   onCreate: (name: string) => Promise<unknown>;
   onRename: (id: string, name: string) => Promise<unknown>;
+  onRecolor: (id: string, color: string) => Promise<unknown>;
   onRouteSlack: (
     link: SlackConnection,
     workspaceId: string,
@@ -83,27 +109,47 @@ export function WorkspaceSwitcher({
     }
   }
   return (
-    <div className="workspace-switch-wrap" ref={rootRef}>
-      <button
-        className="workspace-switch"
-        aria-haspopup="true"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-      >
-        <div className="workspace-avatar">
-          {current.name[0]?.toUpperCase()}
-          <span>✦</span>
-        </div>
-        <div>
-          <strong>{current.name}</strong>
-          <small>
-            {workspaces.length > 1
-              ? `${workspaces.length} workspaces`
-              : "A little room to think"}
-          </small>
-        </div>
-        <ChevronsUpDown className="workspace-chevron" size={15} />
-      </button>
+    <div
+      className={`workspace-switch-wrap is-${variant}`}
+      ref={rootRef}
+      style={spaceStyle(workspaceColor(workspaces, current.id))}
+    >
+      {variant === "pill" ? (
+        <button
+          className="space-pill"
+          aria-haspopup="true"
+          aria-expanded={open}
+          aria-label={`Current workspace: ${current.name}. Switch workspace`}
+          onClick={() => setOpen(!open)}
+        >
+          <span className="space-pill-avatar">
+            {current.name[0]?.toUpperCase()}
+          </span>
+          <span className="space-pill-name">{current.name}</span>
+          <ChevronDown size={13} />
+        </button>
+      ) : (
+        <button
+          className="workspace-switch"
+          aria-haspopup="true"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >
+          <div className="workspace-avatar">
+            {current.name[0]?.toUpperCase()}
+            <span>✦</span>
+          </div>
+          <div>
+            <strong>{current.name}</strong>
+            <small>
+              {workspaces.length > 1
+                ? `${workspaces.length} workspaces`
+                : "A little room to think"}
+            </small>
+          </div>
+          <ChevronsUpDown className="workspace-chevron" size={15} />
+        </button>
+      )}
       {open && (
         <div className="workspace-menu" role="menu">
           <div className="workspace-menu-label">WORKSPACES</div>
@@ -118,7 +164,10 @@ export function WorkspaceSwitcher({
                 setOpen(false);
               }}
             >
-              <span className="workspace-menu-avatar">
+              <span
+                className="workspace-menu-avatar"
+                style={spaceStyle(workspaceColor(workspaces, w.id))}
+              >
                 {w.name[0]?.toUpperCase()}
               </span>
               <span>{w.name}</span>
@@ -162,6 +211,30 @@ export function WorkspaceSwitcher({
               </button>
             </div>
           )}
+          <div
+            className="workspace-colors"
+            role="radiogroup"
+            aria-label={`Color for ${current.name}`}
+          >
+            {(Object.keys(WORKSPACE_COLORS) as WorkspaceColor[]).map((c) => (
+              <button
+                key={c}
+                role="radio"
+                aria-checked={workspaceColor(workspaces, current.id) === c}
+                aria-label={c}
+                title={c}
+                className="workspace-color"
+                style={spaceStyle(c)}
+                disabled={busy}
+                onClick={() =>
+                  run(
+                    () => onRecolor(current.id, c),
+                    "Couldn't change the color",
+                  )
+                }
+              />
+            ))}
+          </div>
           {slack.length > 0 && (
             <>
               <div className="workspace-menu-label">SLACK SENDS TO</div>

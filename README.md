@@ -25,7 +25,7 @@ Open http://localhost:3000. Use `npm run build` for a production build, `npm sta
 - Tags, workspace-wide search, tag filters, sorting, list/grid views, completion and reopening, and confirmed deletion.
 - Email/password accounts, confirmed email signup, password recovery, and sign-out through Supabase Auth.
 - Account storage in Supabase with row-level security, a one-time move of older browser-only notes, JSON export, and a GTD weekly-review guide.
-- Multiple workspaces (e.g. Personal and Waltz) under one login: switch from the sidebar card. Each has its own buckets, notes, tags, and search, and a note can be moved between workspaces from the editor.
+- Multiple workspaces (e.g. Personal and Waltz) under one login: switch from the colored pill in the top bar or the sidebar card. Each workspace has its own color (chosen in the switcher). Each has its own buckets, notes, tags, and search, and a note can be moved between workspaces from the editor.
 - "Send to Orbit" Slack message shortcut that drops messages into the Inbox of the workspace that Slack is linked to.
 - Responsive layouts, keyboard shortcuts, and reduced-motion support.
 

@@ -48,10 +48,11 @@ export function useWorkspaces(
     select(workspace.id);
     return workspace as Workspace;
   }
-  async function rename(id: string, name: string) {
-    const { workspace } = await send(`/api/workspaces/${id}`, "PATCH", {
-      name,
-    });
+  async function update(
+    id: string,
+    changes: { name?: string; color?: string },
+  ) {
+    const { workspace } = await send(`/api/workspaces/${id}`, "PATCH", changes);
     setWorkspaces((list) => list.map((w) => (w.id === id ? workspace : w)));
   }
   async function routeSlack(link: SlackConnection, workspaceId: string) {
@@ -78,7 +79,8 @@ export function useWorkspaces(
     current: workspaces.find((w) => w.id === currentId) ?? workspaces[0],
     select,
     create,
-    rename,
+    rename: (id: string, name: string) => update(id, { name }),
+    recolor: (id: string, color: string) => update(id, { color }),
     slack,
     routeSlack,
     disconnectSlack,

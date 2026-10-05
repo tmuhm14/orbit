@@ -28,7 +28,7 @@ export async function loadWorkspaces(
   const list = () =>
     supabase
       .from("workspaces")
-      .select("id,name,position")
+      .select("id,name,position,color")
       .order("position")
       .order("created_at")
       .returns<Workspace[]>();

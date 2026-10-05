@@ -25,7 +25,9 @@ export default async function Home() {
       email={user.email || "Your account"}
       initialNotes={error || !spaces ? null : data.map(fromRow)}
       initialWorkspaces={
-        spaces?.workspaces ?? [{ id: "", name: "Personal", position: 0 }]
+        spaces?.workspaces ?? [
+          { id: "", name: "Personal", position: 0, color: null },
+        ]
       }
       initialSlack={spaces?.slack ?? []}
     />
