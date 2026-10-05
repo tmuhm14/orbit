@@ -16,6 +16,13 @@ export async function linkSlackAccount(form: FormData) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
+  // Read through the user's session so only their own workspace can be chosen.
+  const { data: workspace } = await supabase
+    .from("workspaces")
+    .select("id")
+    .eq("id", String(form.get("workspace") || ""))
+    .maybeSingle();
+  if (!workspace) redirect("/slack/link?status=failed");
   // The token proves control of the Slack account; the session proves the
   // Orbit account. Re-linking moves the Slack account to this Orbit account.
   const { error } = await admin.from("slack_links").upsert({
@@ -23,6 +30,7 @@ export async function linkSlackAccount(form: FormData) {
     slack_user_id: identity.userId,
     slack_team_name: identity.teamName ?? null,
     user_id: user.id,
+    workspace_id: workspace.id,
   });
   redirect(`/slack/link?status=${error ? "failed" : "linked"}`);
 }

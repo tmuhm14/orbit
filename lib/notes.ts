@@ -63,6 +63,21 @@ export type Note = {
   completedAt: string | null;
   source: "web" | "slack";
   origin?: NoteOrigin | null;
+  /** Empty only for notes from older browser storage, before workspaces. */
+  workspaceId: string;
+};
+export type Workspace = {
+  id: string;
+  name: string;
+  position: number;
+  color: string | null;
+};
+/** A Slack account linked to this Orbit account, and where its captures go. */
+export type SlackConnection = {
+  teamId: string;
+  teamName: string | null;
+  slackUserId: string;
+  workspaceId: string;
 };
 /** Where a captured note came from, kept so it can be traced back. */
 export type NoteOrigin = {
@@ -82,7 +97,11 @@ export const textDoc = (text: string): JSONContent => ({
     content: line ? [{ type: "text", text: line }] : undefined,
   })),
 });
-export function createNote(title = "", bucket: BucketId = "inbox"): Note {
+export function createNote(
+  title = "",
+  bucket: BucketId = "inbox",
+  workspaceId = "",
+): Note {
   const now = new Date().toISOString();
   return {
     id: crypto.randomUUID(),
@@ -95,6 +114,7 @@ export function createNote(title = "", bucket: BucketId = "inbox"): Note {
     updatedAt: now,
     completedAt: null,
     source: "web",
+    workspaceId,
   };
 }
 export function isNote(value: unknown): value is Note {
@@ -224,4 +244,40 @@ export function mergeServerNotes(
   for (const id of synced.keys())
     if (!serverIds.has(id) && !kept.has(id)) nextSynced.delete(id);
   return { notes, synced: nextSynced };
+}
+
+/** Accent palette for workspaces. ink is the text color on a solid accent. */
+export const WORKSPACE_COLORS = {
+  black: { accent: "#050506", ink: "#f4f1fa", line: "#4b4954" },
+  purple: { accent: "#b09aeb", ink: "#17141d", line: "#b09aeb" },
+  blue: { accent: "#8fafd9", ink: "#11161d", line: "#8fafd9" },
+  green: { accent: "#91cbb3", ink: "#111a16", line: "#91cbb3" },
+  amber: { accent: "#d0b185", ink: "#1c160e", line: "#d0b185" },
+  pink: { accent: "#c69eb9", ink: "#1c1219", line: "#c69eb9" },
+  slate: { accent: "#a4a8bc", ink: "#14151b", line: "#a4a8bc" },
+} as const;
+export type WorkspaceColor = keyof typeof WORKSPACE_COLORS;
+export const isWorkspaceColor = (value: unknown): value is WorkspaceColor =>
+  typeof value === "string" && value in WORKSPACE_COLORS;
+const AUTO_COLORS: WorkspaceColor[] = [
+  "purple",
+  "blue",
+  "green",
+  "amber",
+  "pink",
+  "slate",
+];
+/** The workspace's chosen color, or an automatic one by its position. */
+export function workspaceColor(
+  workspaces: Workspace[],
+  id: string,
+): WorkspaceColor {
+  const index = Math.max(
+    0,
+    workspaces.findIndex((w) => w.id === id),
+  );
+  const chosen = workspaces[index]?.color;
+  return isWorkspaceColor(chosen)
+    ? chosen
+    : AUTO_COLORS[index % AUTO_COLORS.length];
 }

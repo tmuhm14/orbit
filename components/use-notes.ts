@@ -121,9 +121,11 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
   }, [userId]);
 
   /** Moves notes kept only in this browser into the account. */
-  async function importBrowserNotes(): Promise<boolean> {
+  async function importBrowserNotes(workspaceId: string): Promise<boolean> {
     const ids = new Set(notesRef.current.map((n) => n.id));
-    const incoming = browserPending.filter((n) => !ids.has(n.id));
+    const incoming = browserPending
+      .filter((n) => !ids.has(n.id))
+      .map((n) => ({ ...n, workspaceId }));
     try {
       if (incoming.length)
         await api("/api/notes", {

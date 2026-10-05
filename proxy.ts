@@ -31,5 +31,7 @@ export const config = {
     "/auth/:path*",
     "/slack/:path*",
     "/api/notes/:path*",
+    "/api/workspaces/:path*",
+    "/api/slack-links",
   ],
 };

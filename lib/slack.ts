@@ -115,6 +115,7 @@ export function noteFromSlackMessage(action: SlackMessageAction) {
     completedAt: null,
     source: "slack",
     origin,
+    workspaceId: "",
   };
   return {
     note,

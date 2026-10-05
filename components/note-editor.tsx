@@ -33,7 +33,7 @@ import {
   Hash,
   ArrowUpRight,
 } from "lucide-react";
-import { BUCKETS, type Note, type BucketId } from "@/lib/notes";
+import { BUCKETS, type Note, type BucketId, type Workspace } from "@/lib/notes";
 
 const commands = [
   {
@@ -94,12 +94,14 @@ const commands = [
 
 export function NoteEditor({
   note,
+  workspaces,
   onUpdate,
   onClose,
   onDelete,
   storageError,
 }: {
   note: Note;
+  workspaces: Workspace[];
   onUpdate: (patch: Partial<Note>) => void;
   onClose: () => void;
   onDelete: () => void;
@@ -373,6 +375,27 @@ export function NoteEditor({
                 </select>
                 <ChevronDown size={14} />
               </div>
+              {workspaces.length > 1 && (
+                <>
+                  <span>Workspace</span>
+                  <div className="select-wrap">
+                    <select
+                      aria-label="Note workspace"
+                      value={note.workspaceId}
+                      onChange={(e) =>
+                        onUpdate({ workspaceId: e.target.value })
+                      }
+                    >
+                      {workspaces.map((w) => (
+                        <option key={w.id} value={w.id}>
+                          {w.name}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown size={14} />
+                  </div>
+                </>
+              )}
               {note.origin?.kind === "slack" && (
                 <>
                   <span>Source</span>
