@@ -1,5 +1,7 @@
 # Orbit
 
+Live app: [orbit-swart-mu.vercel.app](https://orbit-swart-mu.vercel.app)
+
 A calm, space-inspired Getting Things Done workspace built with Next.js, React, TypeScript, and Tiptap. This first version focuses on capturing and organizing thoughts.
 
 ## Run locally
@@ -32,7 +34,7 @@ There is no account system or shared database yet. Do not treat this release as 
 
 ## Deploy to Vercel
 
-The project uses the Next.js App Router with no hosting-specific dependencies. Import this repository into Vercel, select the Next.js preset, and use the default build command (`npm run build`). No environment variables are needed for this local-storage version. Deployment has not been performed by this project setup.
+The project uses the Next.js App Router with no hosting-specific dependencies. Import this repository into Vercel, select the Next.js preset, and use the default build command (`npm run build`). No environment variables are needed for this local-storage version. The production project is `orbit` in the `tmuhm14s-projects` Vercel workspace and is connected to `tmuhm14/orbit` on GitHub. Pushes to `main` deploy to production.
 
 Official framework guidance: https://vercel.com/docs/frameworks/full-stack/nextjs
 
