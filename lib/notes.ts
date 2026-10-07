@@ -71,8 +71,11 @@ export type Workspace = {
   name: string;
   position: number;
   color: string | null;
+  isDefault: boolean;
   /** Secret part of the workspace's email address. */
   inboxToken: string;
+  /** Whether the organizing agent may read and change this workspace's notes. */
+  agentEnabled: boolean;
 };
 /** A Slack account linked to this Orbit account, and where its captures go. */
 export type SlackConnection = {

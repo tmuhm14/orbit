@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { authConfig } from "@/lib/supabase/config";
 import { NOTE_COLUMNS, fromRow, type NoteRow } from "@/lib/notes-db";
 import { loadWorkspaces } from "@/lib/workspaces-db";
+import { agentEncryptionKey } from "@/lib/agent/server";
 
 export default async function Home() {
   if (!authConfig()) redirect("/login");
@@ -31,12 +32,15 @@ export default async function Home() {
             name: "Personal",
             position: 0,
             color: null,
+            isDefault: true,
             inboxToken: "",
+            agentEnabled: false,
           },
         ]
       }
       initialSlack={spaces?.slack ?? []}
       inboundDomain={process.env.RESEND_INBOUND_DOMAIN || null}
+      agentAvailable={!!agentEncryptionKey()}
     />
   );
 }

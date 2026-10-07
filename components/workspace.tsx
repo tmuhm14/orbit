@@ -25,6 +25,7 @@ import {
   CheckCircle2,
   Feather,
   LogOut,
+  Bot,
 } from "lucide-react";
 import {
   BUCKETS,
@@ -38,6 +39,7 @@ import {
 } from "@/lib/notes";
 import { NoteEditor } from "./note-editor";
 import { GuideDialog } from "./guide-dialog";
+import { AgentDialog } from "./agent-dialog";
 import { SearchDialog } from "./search-dialog";
 import { useNotes } from "./use-notes";
 import { useSessionWatch } from "./use-session-watch";
@@ -53,7 +55,7 @@ const icons = {
   sparkles: Sparkles,
   book: BookOpen,
 };
-type View = "overview" | BucketId | "completed";
+type View = "overview" | "all" | BucketId | "completed";
 
 export function Workspace({
   userId,
@@ -62,6 +64,7 @@ export function Workspace({
   initialWorkspaces,
   initialSlack,
   inboundDomain,
+  agentAvailable,
 }: {
   userId: string;
   email: string;
@@ -69,6 +72,7 @@ export function Workspace({
   initialWorkspaces: WorkspaceInfo[];
   initialSlack: SlackConnection[];
   inboundDomain: string | null;
+  agentAvailable: boolean;
 }) {
   const {
     notes,
@@ -79,9 +83,10 @@ export function Workspace({
     browserNoteCount,
     dismissBrowserNotes,
     importBrowserNotes,
+    refresh,
   } = useNotes(userId, initialNotes);
   const sessionExpired = useSessionWatch(userId);
-  const spaces = useWorkspaces(userId, initialWorkspaces, initialSlack);
+  const spaces = useWorkspaces(initialWorkspaces, initialSlack);
   const workspaceId = spaces.current.id;
   const [view, setView] = useState<View>("overview");
   const [selected, setSelected] = useState<string | null>(null);
@@ -93,9 +98,12 @@ export function Workspace({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [sort, setSort] = useState<"newest" | "oldest" | "title">("newest");
   const [layout, setLayout] = useState<"list" | "grid">("list");
+  const [draggedNoteId, setDraggedNoteId] = useState<string | null>(null);
+  const [dropBucket, setDropBucket] = useState<BucketId | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [guideOpen, setGuideOpen] = useState(false);
+  const [agentOpen, setAgentOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const captureRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
@@ -117,6 +125,7 @@ export function Workspace({
       if (event.key === "Escape") {
         setSearchOpen(false);
         setGuideOpen(false);
+        setAgentOpen(false);
         setSidebarOpen(false);
       }
     }
@@ -139,8 +148,8 @@ export function Workspace({
   const visible = workspaceNotes
     .filter((n) => {
       const matchesView = search
-        ? true
-        : view === "overview"
+        ? view === "all" ? !n.completedAt : true
+        : view === "overview" || view === "all"
           ? !n.completedAt
           : view === "completed"
             ? !!n.completedAt
@@ -181,6 +190,10 @@ export function Workspace({
     counts: notesPerWorkspace,
     slack: spaces.slack,
     onSelect: switchWorkspace,
+    onSetDefault: async (id: string) => {
+      await spaces.setDefault(id);
+      setToast("Default space updated");
+    },
     onCreate: async (name: string) => {
       await spaces.create(name);
       navigate("overview");
@@ -245,6 +258,18 @@ export function Workspace({
       ),
     );
   }
+  function moveNoteToBucket(noteId: string, destination: BucketId) {
+    setNotes((current) =>
+      current.map((note) =>
+        note.id === noteId &&
+        note.workspaceId === workspaceId &&
+        !note.completedAt &&
+        note.bucket !== destination
+          ? { ...note, bucket: destination, updatedAt: new Date().toISOString() }
+          : note,
+      ),
+    );
+  }
   function exportNotes() {
     const file = new Blob(
       [
@@ -288,7 +313,7 @@ export function Workspace({
         />
       )}
       <aside
-        inert={!!currentNote || searchOpen || guideOpen}
+        inert={!!currentNote || searchOpen || guideOpen || agentOpen}
         className={`sidebar ${sidebarOpen ? "is-open" : ""}`}
       >
         <button
@@ -316,6 +341,14 @@ export function Workspace({
             <LayoutGrid size={18} />
             <span>My space</span>
             <span className="nav-active-dot" />
+          </button>
+          <button
+            className={`nav-item ${view === "all" && !search ? "active" : ""}`}
+            onClick={() => navigate("all")}
+          >
+            <List size={18} />
+            <span>All items</span>
+            <span className="nav-count">{loaded ? activeNotes.length : "–"}</span>
           </button>
           <div className="nav-label">
             YOUR BUCKETS <span>{BUCKETS.length}</span>
@@ -396,7 +429,7 @@ export function Workspace({
       </aside>
       <div
         className="main-shell"
-        inert={!!currentNote || searchOpen || guideOpen}
+        inert={!!currentNote || searchOpen || guideOpen || agentOpen}
       >
         <header className="topbar">
           <div className="breadcrumb">
@@ -413,10 +446,22 @@ export function Workspace({
               {search
                 ? "Search"
                 : bucket?.name ||
-                  (view === "completed" ? "Completed" : "My space")}
+                  (view === "completed"
+                    ? "Completed"
+                    : view === "all"
+                      ? "All items"
+                      : "My space")}
             </strong>
           </div>
           <div className="topbar-right">
+            <button
+              className="icon-button"
+              onClick={() => setAgentOpen(true)}
+              aria-label="Organizing agent"
+              title="Organizing agent"
+            >
+              <Bot size={18} />
+            </button>
             <button
               className="primary-button small"
               onClick={newNote}
@@ -512,6 +557,8 @@ export function Workspace({
                   })()
                 ) : search ? (
                   <Search size={25} />
+                ) : view === "all" ? (
+                  <List size={25} />
                 ) : (
                   <CheckCircle2 size={25} />
                 )}
@@ -521,13 +568,17 @@ export function Workspace({
                   {search ? "ACROSS YOUR WORKSPACE" : "A PLACE FOR EVERYTHING"}
                 </div>
                 <h1>
-                  {search ? "Find a thought" : bucket?.name || "Completed"}
+                  {search
+                    ? "Find a thought"
+                    : bucket?.name || (view === "all" ? "All items" : "Completed")}
                 </h1>
                 <p>
                   {search
                     ? `Results for “${search}”`
                     : bucket?.hint ||
-                      "A little evidence of how far you have come."}
+                      (view === "all"
+                        ? "All your active thoughts, grouped by bucket. Drag to move them."
+                        : "A little evidence of how far you have come.")}
                 </p>
               </div>
             </section>
@@ -638,7 +689,9 @@ export function Workspace({
                   ? "Search results"
                   : view === "overview"
                     ? "Recent thoughts"
-                    : "Your notes"}
+                    : view === "all"
+                      ? "All items"
+                      : "Your notes"}
                 <span className="item-count">{visible.length}</span>
               </h2>
               <div className="notes-tools">
@@ -649,7 +702,7 @@ export function Workspace({
                 >
                   <SlidersHorizontal size={16} />
                 </button>
-                <div className="view-toggle">
+                {view !== "all" && <div className="view-toggle">
                   <button
                     className={layout === "list" ? "active" : ""}
                     onClick={() => setLayout("list")}
@@ -664,7 +717,7 @@ export function Workspace({
                   >
                     <LayoutGrid size={15} />
                   </button>
-                </div>
+                </div>}
               </div>
             </div>
             {(filtersOpen || search) && (
@@ -709,6 +762,75 @@ export function Workspace({
             )}
             {!loaded ? (
               <div className="empty-state">Making a little space…</div>
+            ) : view === "all" ? (
+              <div className="bucket-groups">
+                {BUCKETS.map((b) => {
+                  const Icon = icons[b.icon];
+                  const groupNotes = visible.filter((note) => note.bucket === b.id);
+                  return (
+                    <section
+                      key={b.id}
+                      className={`bucket-group ${b.color} ${dropBucket === b.id ? "is-drop-target" : ""}`}
+                      aria-label={`${b.name} bucket`}
+                      onDragOver={(event) => {
+                        if (!draggedNoteId) return;
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "move";
+                        if (dropBucket !== b.id) setDropBucket(b.id);
+                      }}
+                      onDragLeave={(event) => {
+                        if (!event.currentTarget.contains(event.relatedTarget as Node))
+                          setDropBucket(null);
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        if (draggedNoteId) moveNoteToBucket(draggedNoteId, b.id);
+                        setDraggedNoteId(null);
+                        setDropBucket(null);
+                      }}
+                    >
+                      <div className="bucket-group-heading">
+                        <span className="bucket-group-icon"><Icon size={17} /></span>
+                        <h3>{b.name}</h3>
+                        <span className="bucket-group-count">{groupNotes.length}</span>
+                      </div>
+                      <div className="bucket-group-rows">
+                        {groupNotes.length ? groupNotes.map((note) => (
+                          <div
+                            className={`bucket-group-row ${draggedNoteId === note.id ? "is-dragging" : ""}`}
+                            key={note.id}
+                            draggable
+                            onDragStart={(event) => {
+                              event.dataTransfer.effectAllowed = "move";
+                              event.dataTransfer.setData("text/plain", note.id);
+                              setDraggedNoteId(note.id);
+                            }}
+                            onDragEnd={() => {
+                              setDraggedNoteId(null);
+                              setDropBucket(null);
+                            }}
+                          >
+                            <span className="bucket-group-grip" aria-hidden="true">⋮⋮</span>
+                            <button className="bucket-group-open" onClick={() => setSelected(note.id)}>
+                              <strong>{note.title || "Untitled thought"}</strong>
+                              <span>{note.plainText || "A new thought, ready to take shape."}</span>
+                            </button>
+                            <select
+                              aria-label={`Move ${note.title || "Untitled thought"} to bucket`}
+                              value={note.bucket}
+                              onChange={(event) => moveNoteToBucket(note.id, event.target.value as BucketId)}
+                            >
+                              {BUCKETS.map((destination) => (
+                                <option key={destination.id} value={destination.id}>{destination.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )) : <p className="bucket-group-empty">{search || tagFilter ? "No matching items" : "Drop an item here"}</p>}
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
             ) : visible.length ? (
               <div className={layout === "grid" ? "notes-grid" : "notes-list"}>
                 {layout === "list" && (
@@ -835,6 +957,19 @@ export function Workspace({
         />
       )}
       {guideOpen && <GuideDialog onClose={() => setGuideOpen(false)} />}
+      {agentOpen && (
+        <AgentDialog
+          workspace={spaces.current}
+          notes={workspaceNotes}
+          available={agentAvailable}
+          onToggleWorkspace={(enabled) =>
+            spaces.setAgentEnabled(workspaceId, enabled)
+          }
+          onNotesChanged={() => void refresh()}
+          onToast={setToast}
+          onClose={() => setAgentOpen(false)}
+        />
+      )}
       {toast && (
         <div className="toast" role="status">
           <span>

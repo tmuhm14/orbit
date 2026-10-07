@@ -25,8 +25,9 @@ Open http://localhost:3000. Use `npm run build` for a production build, `npm sta
 - Tags, workspace-wide search, tag filters, sorting, list/grid views, completion and reopening, and confirmed deletion.
 - Email/password accounts, confirmed email signup, password recovery, and sign-out through Supabase Auth.
 - Account storage in Supabase with row-level security, a one-time move of older browser-only notes, JSON export, and a GTD weekly-review guide.
-- Multiple workspaces (e.g. Personal and Waltz) under one login: switch from the colored pill in the top bar or the sidebar card. Each workspace has its own color (chosen in the switcher). Each has its own buckets, notes, tags, and search, and a note can be moved between workspaces from the editor.
+- Multiple workspaces (e.g. Personal and Waltz) under one login: switch from the colored pill in the top bar or the sidebar card. Each workspace has its own color and can be set as the account's default in the switcher. The default opens after sign-in on any device. Each space has its own buckets, notes, tags, and search, and a note can be moved between spaces from the editor.
 - Email capture: each workspace has a private address; forwarded emails land in its Inbox.
+- Organizing agent with your own Anthropic, OpenAI, or xAI (Grok) key: triages Slack and email captures as they arrive, organizes a workspace on request or follows a typed instruction, and logs every change with one-click undo. Opt-in per workspace.
 - "Send to Orbit" Slack message shortcut that drops messages into the Inbox of the workspace that Slack is linked to.
 - Responsive layouts, keyboard shortcuts, and reduced-motion support.
 
@@ -110,9 +111,31 @@ Setup:
 4. **API Keys**: create a key that can read received emails.
 5. In Vercel (and `.env.local`) set `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, and `RESEND_INBOUND_DOMAIN` (just the domain, e.g. `abc123.resend.app`), then redeploy.
 
+## Organizing agent
+
+Open the robot button in the top bar. Choose a provider (Anthropic, OpenAI, or xAI/Grok), paste an API key, and pick a model (the list comes from your key). The key is checked against the provider, encrypted with AES-256-GCM (`AGENT_ENCRYPTION_KEY`), and stored in `agent_settings`, a table the browser cannot read. Only the last four characters are ever shown again. Model usage is billed to your provider account.
+
+The agent only works in workspaces where **Allow the agent to read and change notes** is on. That switch is per workspace and off by default; the migration turns it on for workspaces named Personal. Notes in an enabled workspace are sent to the chosen provider, so keep it off for workspaces that may hold patient or other regulated data unless your agreement with the provider covers it.
+
+What it does:
+
+- **New captures**: with "Triage Slack and email captures" on, each capture is triaged right after it arrives (bucket, clearer title, tags).
+- **Organize workspace / Triage inbox**: runs in the background; the dialog shows progress, then the summary.
+- **Instructions**: type a request ("Group the Q4 planning notes into a project and list next actions") and press Run.
+
+Tools: list, read, update (title, bucket, tags, completion, append text), and create notes, all scoped on the server to one user and one workspace. It cannot delete notes or reach other workspaces, and is told to treat note content (emails, Slack messages) as data, never as instructions. A run stops after 16 model turns or 60 changes. Each change is stored in `agent_actions` with the values it replaced. **Undo** restores them, or removes a note the agent created. Logs record only run ids, never note content.
+
+Provider adapters are in `lib/agent/providers.ts` (xAI uses the OpenAI-compatible format). The loop and tools are in `lib/agent/agent.ts`, and the database glue is in `lib/agent/server.ts`.
+
+Setup:
+
+1. Apply `supabase/migrations/20261010000000_agent.sql`.
+2. Set `AGENT_ENCRYPTION_KEY` in Vercel and `.env.local` (`openssl rand -base64 32`). Changing it makes saved keys unreadable; users then re-enter them.
+3. Background runs use `maxDuration = 300` on `/api/agent/runs` and 120 on the capture routes. That requires Vercel Fluid compute (the default for new projects). Runs that are cut off show as "Timed out".
+
 ## Validation
 
-- `npm test`: account isolation, explicit legacy import and browser-note moves, duplicate handling, invalid-data preservation, Slack signature checks, message conversion, link tokens, Resend webhook signatures, email address parsing, and email-to-note conversion.
+- `npm test`: account isolation, explicit legacy import and browser-note moves, duplicate handling, invalid-data preservation, Slack signature checks, message conversion, link tokens, Resend webhook signatures, email address parsing, email-to-note conversion, API key encryption, Anthropic and OpenAI/xAI request mapping, agent tool validation, and the agent loop.
 - `npm run build`: production compilation and type checking.
 - `ORBIT_AUTH_INTEGRATION=1 node --env-file=.env.local tests/auth-smoke.mjs`: opt-in provider/server checks against a running local app. Set `ORBIT_TEST_URL` for a different origin. Requires a Supabase admin key and creates/removes one disposable test account; sends no emails. Checks anonymous access, invalid passwords, verified sessions, forged cookies, and sign-out.
 
@@ -127,6 +150,6 @@ Official framework guidance: https://vercel.com/docs/frameworks/full-stack/nextj
 1. **Shared note storage.** Done: notes live in Postgres with per-user row-level security. Next: live updates instead of polling, and conflict handling beyond last-write-wins.
 2. **Cross-platform clients.** Share the note/bucket types and API contract with mobile and desktop clients. Add offline change queues, conflict resolution, and live updates before enabling concurrent editing.
 3. **Inbound capture.** Slack is in place (`source`, `source_ref` for idempotency, `origin` for provenance). Email/SMS can follow the same pattern.
-4. **Agent organization.** Have an agent propose formatting, tags, and a bucket, with confidence, provenance, and an audit trail. Introduce user-approved external actions separately.
+4. **Agent organization.** Done: a bring-your-own-key agent triages and organizes notes, with an audit trail and undo. Next: external actions (Slack replies, email, calendar, Jira) behind explicit approval.
 
 The current `Note` model separates stable IDs, rich content, searchable plain text, bucket, tags, timestamps, completion, and capture source. Buckets and storage access are defined in `lib/notes.ts`, and `components/use-notes.ts` is the only place the workspace loads or saves notes (through `/api/notes`). Slack capture is in `lib/slack.ts` and `app/api/slack/interact`. Session checks live in `components/use-session-watch.ts`; the workspace, note editor, search, and weekly-review dialogs are separate components.

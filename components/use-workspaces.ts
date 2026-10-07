@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { SlackConnection, Workspace } from "@/lib/notes";
 
 async function send(path: string, method: string, body: unknown) {
@@ -14,33 +14,25 @@ async function send(path: string, method: string, body: unknown) {
   return data;
 }
 
-// Workspaces, the one being viewed (remembered per account in this browser),
-// and where each linked Slack workspace sends its captures.
+// Workspaces, the one being viewed, and where each linked Slack workspace
+// sends its captures. Each new session opens the account's default space.
 export function useWorkspaces(
-  userId: string,
   initial: Workspace[],
   initialSlack: SlackConnection[],
 ) {
   const [workspaces, setWorkspaces] = useState(initial);
   const [slack, setSlack] = useState(initialSlack);
-  const [currentId, setCurrentId] = useState(initial[0]?.id ?? "");
-  const storageKey = `orbit.workspace:${userId}`;
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(storageKey);
-      if (saved && initial.some((w) => w.id === saved)) setCurrentId(saved);
-    } catch {
-      /* Falls back to the first workspace. */
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storageKey]);
+  const [currentId, setCurrentId] = useState(
+    initial.find((w) => w.isDefault)?.id ?? initial[0]?.id ?? "",
+  );
   function select(id: string) {
     setCurrentId(id);
-    try {
-      localStorage.setItem(storageKey, id);
-    } catch {
-      /* Only the remembered choice is lost. */
-    }
+  }
+  async function setDefault(id: string) {
+    await send(`/api/workspaces/${id}/default`, "POST", {});
+    setWorkspaces((list) =>
+      list.map((workspace) => ({ ...workspace, isDefault: workspace.id === id })),
+    );
   }
   async function create(name: string) {
     const { workspace } = await send("/api/workspaces", "POST", { name });
@@ -50,7 +42,7 @@ export function useWorkspaces(
   }
   async function update(
     id: string,
-    changes: { name?: string; color?: string },
+    changes: { name?: string; color?: string; agentEnabled?: boolean },
   ) {
     const { workspace } = await send(`/api/workspaces/${id}`, "PATCH", changes);
     setWorkspaces((list) => list.map((w) => (w.id === id ? workspace : w)));
@@ -88,9 +80,12 @@ export function useWorkspaces(
     workspaces,
     current: workspaces.find((w) => w.id === currentId) ?? workspaces[0],
     select,
+    setDefault,
     create,
     rename: (id: string, name: string) => update(id, { name }),
     recolor: (id: string, color: string) => update(id, { color }),
+    setAgentEnabled: (id: string, agentEnabled: boolean) =>
+      update(id, { agentEnabled }),
     newAddress,
     slack,
     routeSlack,

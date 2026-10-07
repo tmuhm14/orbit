@@ -151,5 +151,6 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
     browserNoteCount: browserPending.length,
     dismissBrowserNotes: () => setBrowserPending([]),
     importBrowserNotes,
+    refresh,
   };
 }
