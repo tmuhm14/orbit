@@ -587,13 +587,14 @@ export function NoteEditor({
                 </button>
                 <button
                   className="secondary-button"
-                  onClick={() =>
+                  onClick={() => {
                     onUpdate({
                       completedAt: note.completedAt
                         ? null
                         : new Date().toISOString(),
-                    })
-                  }
+                    });
+                    if (!note.completedAt) onClose();
+                  }}
                 >
                   <Check size={15} />
                   {note.completedAt ? "Reopen note" : "Mark complete"}

@@ -1,4 +1,6 @@
+import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { triageCaptures } from "@/lib/agent/server";
 import {
   emailRecipients,
   inboxTokens,
@@ -6,6 +8,9 @@ import {
   verifyResendWebhook,
   type ReceivedEmail,
 } from "@/lib/email";
+
+// Leaves room for the organizing agent to triage the capture afterwards.
+export const maxDuration = 120;
 
 // Resend calls this for every email sent to the receiving domain. The webhook
 // carries metadata only; the body is fetched from Resend's API with our key,
@@ -61,26 +66,36 @@ export async function POST(request: Request) {
 
   const { note, sourceRef } = noteFromEmail(email);
   for (const workspace of workspaces) {
-    const { error } = await admin.from("notes").upsert(
-      {
-        id: crypto.randomUUID(),
-        user_id: workspace.user_id,
-        workspace_id: workspace.id,
-        title: note.title,
-        content: note.content,
-        plain_text: note.plainText,
-        bucket: note.bucket,
-        tags: note.tags,
-        source: note.source,
-        source_ref: sourceRef,
-        origin: note.origin,
-        triage_status: "pending",
-        created_at: note.createdAt,
-        updated_at: note.updatedAt,
-      },
-      { onConflict: "user_id,source_ref", ignoreDuplicates: true },
-    );
+    const { data: inserted, error } = await admin
+      .from("notes")
+      .upsert(
+        {
+          id: crypto.randomUUID(),
+          user_id: workspace.user_id,
+          workspace_id: workspace.id,
+          title: note.title,
+          content: note.content,
+          plain_text: note.plainText,
+          bucket: note.bucket,
+          tags: note.tags,
+          source: note.source,
+          source_ref: sourceRef,
+          origin: note.origin,
+          triage_status: "pending",
+          created_at: note.createdAt,
+          updated_at: note.updatedAt,
+        },
+        { onConflict: "user_id,source_ref", ignoreDuplicates: true },
+      )
+      .select("id");
     if (error) return new Response("Could not save", { status: 500 });
+    after(() =>
+      triageCaptures(admin, {
+        userId: workspace.user_id,
+        workspaceId: workspace.id,
+        noteIds: inserted.map((row) => row.id),
+      }),
+    );
   }
   return new Response(null, { status: 200 });
 }

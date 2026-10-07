@@ -59,7 +59,7 @@ export default async function SlackLink({
     workspaces.find((w) => {
       const name = w.name.toLowerCase().replace(/\s+/g, "");
       return name && team && (team.includes(name) || name.includes(team));
-    }) ?? workspaces[0];
+    }) ?? workspaces.find((w) => w.isDefault) ?? workspaces[0];
   return (
     <main className="auth-page">
       <Link href="/" className="auth-brand">

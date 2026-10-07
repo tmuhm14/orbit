@@ -2,6 +2,9 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { SlackConnection, Workspace } from "./notes";
 
+export const WORKSPACE_COLUMNS =
+  "id,name,position,color,isDefault:is_default,inboxToken:inbox_token,agentEnabled:agent_enabled";
+
 type SlackLinkRow = {
   slack_team_id: string;
   slack_team_name: string | null;
@@ -28,14 +31,14 @@ export async function loadWorkspaces(
   const list = () =>
     supabase
       .from("workspaces")
-      .select("id,name,position,color,inboxToken:inbox_token")
+      .select(WORKSPACE_COLUMNS)
       .order("position")
       .order("created_at")
       .returns<Workspace[]>();
   let { data: workspaces, error } = await list();
   if (error || !workspaces) return null;
   if (!workspaces.length) {
-    await supabase.from("workspaces").insert({ name: "Personal" });
+    await supabase.from("workspaces").insert({ name: "Personal", is_default: true });
     ({ data: workspaces, error } = await list());
     if (error || !workspaces?.length) return null;
   }

@@ -1,6 +1,7 @@
 import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { siteUrl } from "@/lib/supabase/config";
+import { triageCaptures } from "@/lib/agent/server";
 import {
   SHORTCUT_CALLBACK_ID,
   escapeSlackText,
@@ -9,6 +10,9 @@ import {
   verifySlackRequest,
   type SlackMessageAction,
 } from "@/lib/slack";
+
+// Leaves room for the organizing agent to triage the capture afterwards.
+export const maxDuration = 120;
 
 // Receives Slack interactivity payloads. Slack expects a 200 within three
 // seconds, so the user-facing reply goes to response_url after responding.
@@ -109,6 +113,13 @@ export async function POST(request: Request) {
   else if (!inserted.length)
     reply("That message is already in your Orbit inbox.");
   else {
+    after(() =>
+      triageCaptures(admin, {
+        userId: link.user_id,
+        workspaceId: link.workspace_id,
+        noteIds: inserted.map((row) => row.id),
+      }),
+    );
     const { data: workspace } = await admin
       .from("workspaces")
       .select("name")

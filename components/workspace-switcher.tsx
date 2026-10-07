@@ -10,6 +10,7 @@ import {
   ChevronsUpDown,
   Pencil,
   Plus,
+  Star,
   Unlink,
 } from "lucide-react";
 import { inboundAddress } from "@/lib/email-address";
@@ -36,6 +37,7 @@ export function WorkspaceSwitcher({
   counts,
   slack,
   onSelect,
+  onSetDefault,
   onCreate,
   onRename,
   onRecolor,
@@ -53,6 +55,7 @@ export function WorkspaceSwitcher({
   counts: Record<string, number>;
   slack: SlackConnection[];
   onSelect: (id: string) => void;
+  onSetDefault: (id: string) => Promise<unknown>;
   onCreate: (name: string) => Promise<unknown>;
   onRename: (id: string, name: string) => Promise<unknown>;
   onRecolor: (id: string, color: string) => Promise<unknown>;
@@ -182,6 +185,9 @@ export function WorkspaceSwitcher({
                 {w.name[0]?.toUpperCase()}
               </span>
               <span>{w.name}</span>
+              {w.isDefault && (
+                <Star className="workspace-default-star" size={13} fill="currentColor" aria-label="Default space" />
+              )}
               <small>{counts[w.id] ?? 0}</small>
               {w.id === current.id && <Check size={14} />}
             </button>
@@ -219,6 +225,18 @@ export function WorkspaceSwitcher({
                 }}
               >
                 <Pencil size={13} /> Rename “{current.name}”
+              </button>
+              <button
+                disabled={busy || current.isDefault}
+                onClick={() =>
+                  run(
+                    () => onSetDefault(current.id),
+                    "Couldn't set the default space",
+                  )
+                }
+              >
+                <Star size={13} />
+                {current.isDefault ? "Default space" : `Set “${current.name}” as default`}
               </button>
             </div>
           )}
