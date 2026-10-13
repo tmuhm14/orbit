@@ -3444,3 +3444,82 @@ main {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Keep the daily workspace focused on capture and content. */
+.welcome-section.welcome-compact {
+  height: auto;
+  min-height: 150px;
+  padding: 24px 0;
+}
+.welcome-compact .welcome-copy {
+  padding: 0;
+  max-width: calc(100% - 190px);
+}
+.welcome-compact .eyebrow {
+  font-size: 9px;
+  letter-spacing: 1.6px;
+}
+.welcome-compact h1 {
+  font-size: clamp(25px, 2.2vw, 32px);
+  line-height: 1.25;
+  letter-spacing: -1px;
+  margin: 9px 0 8px;
+  text-wrap: balance;
+}
+.welcome-compact .welcome-copy > p {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.welcome-compact .orbital-art {
+  position: absolute;
+  width: 350px;
+  height: 245px;
+  right: 0;
+  top: 50%;
+  margin: 0;
+  scale: 0.55;
+  transform: translateY(-50%);
+  transform-origin: right top;
+  opacity: 0.8;
+  pointer-events: none;
+}
+.capture-compact .capture-main {
+  padding: 12px 16px 8px;
+  gap: 12px;
+}
+.capture-compact .capture-bottom {
+  padding: 0 16px 10px 49px;
+  align-items: center;
+}
+.capture-compact + .buckets-section {
+  margin-top: 24px;
+}
+@media (max-width: 900px) {
+  .welcome-compact .welcome-copy {
+    max-width: calc(100% - 120px);
+  }
+  .welcome-compact .orbital-art {
+    scale: 0.38;
+  }
+  .capture-compact .capture-bottom {
+    padding-left: 16px;
+  }
+}
+@media (max-width: 500px) {
+  .welcome-section.welcome-compact {
+    min-height: 0;
+    padding: 20px 0;
+  }
+  .welcome-compact .welcome-copy {
+    max-width: 100%;
+  }
+  .welcome-compact .orbital-art {
+    display: none;
+  }
+  .capture-compact .capture-bottom > span {
+    display: none;
+  }
+  .capture-compact .capture-bottom {
+    justify-content: flex-end;
+  }
+}

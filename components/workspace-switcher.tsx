@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import {
   Check,
   ChevronDown,
@@ -75,13 +76,45 @@ export function WorkspaceSwitcher({
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuPosition, setMenuPosition] = useState<CSSProperties>({});
+  useLayoutEffect(() => {
+    if (!open) return;
+    function positionMenu() {
+      const anchor = rootRef.current?.getBoundingClientRect();
+      if (!anchor) return;
+      const margin = 8;
+      const width = Math.min(
+        variant === "pill" ? 280 : anchor.width + 40,
+        window.innerWidth - margin * 2,
+      );
+      const top = Math.min(anchor.bottom + 6, window.innerHeight - margin);
+      setMenuPosition({
+        position: "fixed",
+        top,
+        left: Math.max(margin, Math.min(anchor.left, window.innerWidth - width - margin)),
+        right: "auto",
+        width,
+        maxHeight: window.innerHeight - top - margin,
+        overflowY: "auto",
+      });
+    }
+    positionMenu();
+    window.addEventListener("resize", positionMenu);
+    document.addEventListener("scroll", positionMenu, true);
+    return () => {
+      window.removeEventListener("resize", positionMenu);
+      document.removeEventListener("scroll", positionMenu, true);
+    };
+  }, [open, variant]);
   useEffect(() => {
     if (!open) return;
     function close(event: MouseEvent | KeyboardEvent) {
       if (
         (event instanceof KeyboardEvent && event.key === "Escape") ||
         (event instanceof MouseEvent &&
-          !rootRef.current?.contains(event.target as Node))
+          !rootRef.current?.contains(event.target as Node) &&
+          !menuRef.current?.contains(event.target as Node))
       ) {
         setOpen(false);
         setEditing(null);
@@ -164,8 +197,13 @@ export function WorkspaceSwitcher({
           <ChevronsUpDown className="workspace-chevron" size={15} />
         </button>
       )}
-      {open && (
-        <div className="workspace-menu" role="menu">
+      {open && createPortal(
+        <div
+          ref={menuRef}
+          className="workspace-menu"
+          role="menu"
+          style={{ ...spaceStyle(workspaceColor(workspaces, current.id)), ...menuPosition }}
+        >
           <div className="workspace-menu-label">WORKSPACES</div>
           {workspaces.map((w) => (
             <button
@@ -368,7 +406,8 @@ export function WorkspaceSwitcher({
               ))}
             </>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

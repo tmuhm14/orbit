@@ -505,21 +505,16 @@ export function Workspace({
           )}
           {view === "overview" && !search ? (
             <>
-              <section className="welcome-section">
+              <section className="welcome-section welcome-compact">
                 <div className="welcome-copy">
                   <div className="eyebrow">
                     <span />
                     LESS NOISE. MORE SPACE.
                   </div>
                   <h1>
-                    A little space for
-                    <br />a <span>clearer mind.</span>
+                    A little space for a <span>clearer mind.</span>
                   </h1>
                   <p>Capture the thought. Find its place. Let it go.</p>
-                  <div className="welcome-meta">
-                    <span className="mini-stars">✧</span>Your ideas have a home
-                    here.
-                  </div>
                 </div>
                 <div className="orbital-art" aria-hidden="true">
                   <div className="orbit-track track-one" />
@@ -541,9 +536,6 @@ export function Workspace({
                   <i className="star star-one" />
                   <i className="star star-two" />
                   <i className="star star-three" />
-                  <span className="orbital-caption">
-                    EVERYTHING, IN ITS OWN ORBIT.
-                  </span>
                 </div>
               </section>
             </>
@@ -584,7 +576,7 @@ export function Workspace({
             </section>
           )}
           {!search && view !== "completed" && (
-            <section className="capture-box" aria-label="Quick capture">
+            <section className="capture-box capture-compact" aria-label="Quick capture">
               <div className="capture-main">
                 <Plus size={21} />
                 <textarea
