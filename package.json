@@ -10,9 +10,11 @@
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/notes.test.mjs tests/slack.test.mjs tests/email.test.mjs tests/agent.test.mjs"
+    "test": "node --experimental-strip-types --test tests/notes.test.mjs tests/slack.test.mjs tests/email.test.mjs tests/agent.test.mjs lib/scheduled/schedule.test.mjs lib/integrations/*.test.mjs scripts/orbit-mcp.test.mjs",
+    "mcp": "node scripts/orbit-mcp.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@supabase/ssr": "0.12.7",
     "@supabase/supabase-js": "2.117.2",
     "@tiptap/extension-placeholder": "3.31.4",
@@ -23,7 +25,8 @@
     "lucide-react": "1.52.0",
     "next": "16.3.8",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/node": "26.6.4",

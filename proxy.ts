@@ -27,11 +27,14 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     "/",
+    "/settings",
+    "/scheduled",
     "/login",
     "/auth/:path*",
     "/slack/:path*",
     "/api/notes/:path*",
     "/api/workspaces/:path*",
+    "/api/scheduled-tasks/:path*",
     "/api/slack-links",
   ],
 };

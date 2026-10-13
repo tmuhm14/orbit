@@ -4,6 +4,10 @@ Live app: [orbit-swart-mu.vercel.app](https://orbit-swart-mu.vercel.app)
 
 A calm, space-inspired Getting Things Done workspace built with Next.js, React, TypeScript, and Tiptap. This first version focuses on capturing and organizing thoughts.
 
+## External agents and MCP
+
+External bots can list agent-enabled workspaces, read notes, and capture Inbox notes through `/api/v1/workspaces` and `/api/v1/notes`. A local MCP adapter exposes the same operations to agents that support stdio. See [connection instructions](docs/api/agents.md) and the [OpenAPI contract](docs/api/openapi.json). Authentication uses a Supabase user access token and respects per-workspace agent permissions. Deploy these routes before connecting a production bot.
+
 ## Run locally
 
 Requires Node.js 22.6 or newer (see `.nvmrc`); the test runner uses built-in TypeScript stripping.
@@ -28,6 +32,7 @@ Open http://localhost:3000. Use `npm run build` for a production build, `npm sta
 - Multiple workspaces (e.g. Personal and Waltz) under one login: switch from the colored pill in the top bar or the sidebar card. Each workspace has its own color and can be set as the account's default in the switcher. The default opens after sign-in on any device. Each space has its own buckets, notes, tags, and search, and a note can be moved between spaces from the editor.
 - Email capture: each workspace has a private address; forwarded emails land in its Inbox.
 - Organizing agent with your own Anthropic, OpenAI, or xAI (Grok) key: triages Slack and email captures as they arrive, organizes a workspace on request or follows a typed instruction, and logs every change with one-click undo. Opt-in per workspace.
+- Scheduled team debriefs from Jira and GitHub activity, with linked reports in Orbit. Existing accounts get an off-by-default 6 a.m. Central task for Specialty and Patient Management; add the exact GitHub repositories and connect read-only credentials to turn it on.
 - "Send to Orbit" Slack message shortcut that drops messages into the Inbox of the workspace that Slack is linked to.
 - Responsive layouts, keyboard shortcuts, and reduced-motion support.
 
@@ -133,9 +138,21 @@ Setup:
 2. Set `AGENT_ENCRYPTION_KEY` in Vercel and `.env.local` (`openssl rand -base64 32`). Changing it makes saved keys unreadable; users then re-enter them.
 3. Background runs use `maxDuration = 300` on `/api/agent/runs` and 120 on the capture routes. That requires Vercel Fluid compute (the default for new projects). Runs that are cut off show as "Timed out".
 
+## Scheduled debriefs
+
+Open **Settings** in the left navigation to manage account details, spaces, Slack and email capture, model provider, and separate Jira and GitHub connections. Jira needs a Cloud site, account email, and API token; GitHub needs a fine-grained token with **Contents: read** and **Pull requests: read** access to the selected repositories. Open **Scheduled jobs** in the left navigation to see configured jobs, running and completed runs, and the saved audit output for each run. The history loads in pages, refreshes while the screen is open, and each run's saved record can be downloaded as JSON. Use **Set up a job** to edit the prepared job: check the Jira project names/keys, add full `owner/repo` names, and turn it on. Job definitions have their own panel, separate from connection settings. You can create more debrief jobs, choose daily or weekdays, set a delivery hour and time zone, and run one immediately. Source tokens are encrypted using `AGENT_ENCRYPTION_KEY` and are never returned to the browser. Reports store issue keys, statuses, PR numbers, commit IDs, and links; issue summaries, PR titles, bodies, and commit messages are not copied into Orbit or sent to a model.
+
+The dispatcher is separate from task definitions so new recurring task kinds can use the same schedule and run history. Vercel invokes 24 once-daily hourly slots in `vercel.json`; the server runs only tasks due in that hour. It starts a task two hours before its chosen delivery time to allow for Vercel's hourly timing window, and a unique database key prevents duplicate scheduled reports. A missed or failed run appears in the report history; **Run now** can retry it manually. GitHub commit activity covers the default branch, while PR activity includes open and closed PR updates. Jira activity includes issues updated during the previous local calendar day.
+
+Setup:
+
+1. Apply `supabase/migrations/20261011000000_scheduled_debriefs.sql` after the earlier migrations.
+2. Set `CRON_SECRET` in Vercel and `.env.local`; keep the existing `AGENT_ENCRYPTION_KEY` and server-side Supabase key configured.
+3. Deploy the `vercel.json` schedule. Vercel Cron uses UTC; the dispatcher translates each user's local time, including daylight saving changes. On Vercel Hobby, each job may start anywhere within its scheduled hour, so reports target availability by the selected hour rather than an exact minute.
+
 ## Validation
 
-- `npm test`: account isolation, explicit legacy import and browser-note moves, duplicate handling, invalid-data preservation, Slack signature checks, message conversion, link tokens, Resend webhook signatures, email address parsing, email-to-note conversion, API key encryption, Anthropic and OpenAI/xAI request mapping, agent tool validation, and the agent loop.
+- `npm test`: account isolation, explicit legacy import and browser-note moves, duplicate handling, invalid-data preservation, Slack signature checks, message conversion, link tokens, Resend webhook signatures, email address parsing, email-to-note conversion, API key encryption, Anthropic and OpenAI/xAI request mapping, agent tool validation and loop, schedule timing across daylight saving changes, source validation, and report data minimization.
 - `npm run build`: production compilation and type checking.
 - `ORBIT_AUTH_INTEGRATION=1 node --env-file=.env.local tests/auth-smoke.mjs`: opt-in provider/server checks against a running local app. Set `ORBIT_TEST_URL` for a different origin. Requires a Supabase admin key and creates/removes one disposable test account; sends no emails. Checks anonymous access, invalid passwords, verified sessions, forged cookies, and sign-out.
 

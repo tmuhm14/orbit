@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Orbit,
   Search,
@@ -26,6 +28,8 @@ import {
   Feather,
   LogOut,
   Bot,
+  CalendarClock,
+  Settings2,
 } from "lucide-react";
 import {
   BUCKETS,
@@ -40,6 +44,9 @@ import {
 import { NoteEditor } from "./note-editor";
 import { GuideDialog } from "./guide-dialog";
 import { AgentDialog } from "./agent-dialog";
+import { ScheduledDialog } from "./scheduled-dialog";
+import { ScheduledAudit } from "./scheduled-audit";
+import { SettingsContent } from "./settings-content";
 import { SearchDialog } from "./search-dialog";
 import { useNotes } from "./use-notes";
 import { useSessionWatch } from "./use-session-watch";
@@ -65,6 +72,8 @@ export function Workspace({
   initialSlack,
   inboundDomain,
   agentAvailable,
+  initialView = "overview",
+  initialSearchOpen = false,
 }: {
   userId: string;
   email: string;
@@ -73,7 +82,13 @@ export function Workspace({
   initialSlack: SlackConnection[];
   inboundDomain: string | null;
   agentAvailable: boolean;
+  initialView?: View;
+  initialSearchOpen?: boolean;
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const settingsPage = pathname === "/settings";
+  const scheduledPage = pathname === "/scheduled";
   const {
     notes,
     setNotes,
@@ -88,12 +103,12 @@ export function Workspace({
   const sessionExpired = useSessionWatch(userId);
   const spaces = useWorkspaces(initialWorkspaces, initialSlack);
   const workspaceId = spaces.current.id;
-  const [view, setView] = useState<View>("overview");
+  const [view, setView] = useState<View>(initialView);
   const [selected, setSelected] = useState<string | null>(null);
   const [capture, setCapture] = useState("");
   const [captureBucket, setCaptureBucket] = useState<BucketId>("inbox");
   const [search, setSearch] = useState("");
-  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(initialSearchOpen);
   const [tagFilter, setTagFilter] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [sort, setSort] = useState<"newest" | "oldest" | "title">("newest");
@@ -104,8 +119,16 @@ export function Workspace({
   const [toast, setToast] = useState("");
   const [guideOpen, setGuideOpen] = useState(false);
   const [agentOpen, setAgentOpen] = useState(false);
+  const [scheduledOpen, setScheduledOpen] = useState(false);
+  const [scheduledRefreshToken, setScheduledRefreshToken] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
   const captureRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (initialSearchOpen && !settingsPage) {
+      setSearchOpen(true);
+      setTimeout(() => searchRef.current?.focus(), 0);
+    }
+  }, [initialSearchOpen, settingsPage]);
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(""), 3500);
@@ -126,12 +149,13 @@ export function Workspace({
         setSearchOpen(false);
         setGuideOpen(false);
         setAgentOpen(false);
+        setScheduledOpen(false);
         setSidebarOpen(false);
       }
     }
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [selected]);
+  }, [selected, settingsPage, scheduledPage, router]);
   async function importExistingNotes() {
     setToast(
       (await importBrowserNotes(workspaceId))
@@ -171,12 +195,13 @@ export function Workspace({
           : b.updatedAt.localeCompare(a.updatedAt),
     );
   function openSearch() {
+    if (settingsPage || scheduledPage) { router.push("/?focus=search"); return; }
     setSearchOpen(true);
     setTimeout(() => searchRef.current?.focus(), 0);
   }
   function switchWorkspace(id: string) {
     spaces.select(id);
-    navigate("overview");
+    if (!settingsPage && !scheduledPage) navigate("overview");
   }
   const notesPerWorkspace = Object.fromEntries(
     spaces.workspaces.map((w) => [
@@ -220,6 +245,7 @@ export function Workspace({
     onError: setToast,
   };
   function navigate(next: View) {
+    if (settingsPage || scheduledPage) router.push(next === "overview" ? "/" : `/?view=${next}`);
     setView(next);
     setSearch("");
     setTagFilter("");
@@ -313,7 +339,7 @@ export function Workspace({
         />
       )}
       <aside
-        inert={!!currentNote || searchOpen || guideOpen || agentOpen}
+        inert={!!currentNote || searchOpen || guideOpen || agentOpen || scheduledOpen}
         className={`sidebar ${sidebarOpen ? "is-open" : ""}`}
       >
         <button
@@ -335,7 +361,7 @@ export function Workspace({
         </button>
         <nav aria-label="Main navigation">
           <button
-            className={`nav-item ${view === "overview" && !search ? "active" : ""}`}
+            className={`nav-item ${!settingsPage && !scheduledPage && view === "overview" && !search ? "active" : ""}`}
             onClick={() => navigate("overview")}
           >
             <LayoutGrid size={18} />
@@ -343,7 +369,7 @@ export function Workspace({
             <span className="nav-active-dot" />
           </button>
           <button
-            className={`nav-item ${view === "all" && !search ? "active" : ""}`}
+            className={`nav-item ${!settingsPage && !scheduledPage && view === "all" && !search ? "active" : ""}`}
             onClick={() => navigate("all")}
           >
             <List size={18} />
@@ -358,7 +384,7 @@ export function Workspace({
             return (
               <button
                 key={b.id}
-                className={`nav-item ${view === b.id && !search ? "active" : ""}`}
+                className={`nav-item ${!settingsPage && !scheduledPage && view === b.id && !search ? "active" : ""}`}
                 onClick={() => navigate(b.id)}
               >
                 <Icon className={b.color} size={18} />
@@ -369,13 +395,22 @@ export function Workspace({
           })}
           <div className="nav-divider" />
           <button
-            className={`nav-item ${view === "completed" ? "active" : ""}`}
+            className={`nav-item ${!settingsPage && !scheduledPage && view === "completed" ? "active" : ""}`}
             onClick={() => navigate("completed")}
           >
             <CheckCircle2 size={18} />
             <span>Completed</span>
             <span className="nav-count">{completed.length || ""}</span>
           </button>
+          <div className="nav-divider" />
+          <Link className={`nav-item ${scheduledPage ? "active" : ""}`} href="/scheduled" onClick={() => setSidebarOpen(false)} aria-current={scheduledPage ? "page" : undefined}>
+            <CalendarClock size={18} />
+            <span>Scheduled jobs</span>
+          </Link>
+          <Link className={`nav-item ${settingsPage ? "active" : ""}`} href="/settings" onClick={() => setSidebarOpen(false)} aria-current={settingsPage ? "page" : undefined}>
+            <Settings2 size={18} />
+            <span>Settings</span>
+          </Link>
         </nav>
         <div className="sidebar-bottom">
           <button className="review-card" onClick={() => setGuideOpen(true)}>
@@ -429,7 +464,7 @@ export function Workspace({
       </aside>
       <div
         className="main-shell"
-        inert={!!currentNote || searchOpen || guideOpen || agentOpen}
+        inert={!!currentNote || searchOpen || guideOpen || agentOpen || scheduledOpen}
       >
         <header className="topbar">
           <div className="breadcrumb">
@@ -443,7 +478,7 @@ export function Workspace({
             <WorkspaceSwitcher variant="pill" {...switcherProps} />
             <ChevronRight size={13} />
             <strong>
-              {search
+              {settingsPage ? "Settings" : scheduledPage ? "Scheduled jobs" : search
                 ? "Search"
                 : bucket?.name ||
                   (view === "completed"
@@ -456,23 +491,46 @@ export function Workspace({
           <div className="topbar-right">
             <button
               className="icon-button"
+              onClick={() => setScheduledOpen(true)}
+              aria-label="Scheduled work"
+              title="Scheduled work"
+            >
+              <CalendarClock size={18} />
+            </button>
+            <button
+              className="icon-button"
               onClick={() => setAgentOpen(true)}
               aria-label="Organizing agent"
               title="Organizing agent"
             >
               <Bot size={18} />
             </button>
-            <button
+            {!settingsPage && !scheduledPage && <button
               className="primary-button small"
               onClick={newNote}
               disabled={!loaded || loadError}
             >
               <Plus size={16} />
               New note
-            </button>
+            </button>}
           </div>
         </header>
-        <main>
+        {scheduledPage ? <ScheduledAudit onOpenScheduled={() => setScheduledOpen(true)} refreshToken={scheduledRefreshToken} /> : settingsPage ? <SettingsContent
+          email={email}
+          workspaces={spaces.workspaces}
+          slack={spaces.slack}
+          inboundDomain={inboundDomain}
+          agentAvailable={agentAvailable}
+          onSetDefault={spaces.setDefault}
+          onCreateSpace={spaces.create}
+          onRenameSpace={spaces.rename}
+          onRecolorSpace={spaces.recolor}
+          onNewAddress={spaces.newAddress}
+          onRouteSlack={spaces.routeSlack}
+          onDisconnectSlack={spaces.disconnectSlack}
+          onOpenScheduled={() => setScheduledOpen(true)}
+          onToast={setToast}
+        /> : <main>
           {browserNoteCount > 0 && !loadError && (
             <div className="legacy-import">
               <p>
@@ -923,7 +981,7 @@ export function Workspace({
               <span className="footer-star">✧</span>
             </span>
           </footer>
-        </main>
+        </main>}
       </div>
       {currentNote && (
         <NoteEditor
@@ -960,6 +1018,13 @@ export function Workspace({
           onNotesChanged={() => void refresh()}
           onToast={setToast}
           onClose={() => setAgentOpen(false)}
+        />
+      )}
+      {scheduledOpen && (
+        <ScheduledDialog
+          onClose={() => { setScheduledOpen(false); setScheduledRefreshToken((value) => value + 1); }}
+          onOpenSettings={() => { setScheduledOpen(false); router.push("/settings"); }}
+          onToast={setToast}
         />
       )}
       {toast && (
