@@ -2,7 +2,7 @@ import "server-only";
 import { BUCKETS, isNote, type Note } from "./notes";
 
 export const NOTE_COLUMNS =
-  "id,workspace_id,title,content,plain_text,bucket,tags,source,origin,created_at,updated_at,completed_at";
+  "id,workspace_id,title,content,plain_text,bucket,tags,source,origin,created_at,updated_at,completed_at,due_date";
 
 export type NoteRow = {
   id: string;
@@ -17,6 +17,7 @@ export type NoteRow = {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  due_date: string | null;
 };
 
 // Postgres returns microsecond offsets ("+00:00"); the client compares the
@@ -37,6 +38,7 @@ export function fromRow(row: NoteRow): Note {
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
     completedAt: row.completed_at && iso(row.completed_at),
+    dueDate: row.due_date ?? null,
   };
 }
 
@@ -54,6 +56,7 @@ export function toRow(note: Note, userId: string) {
     created_at: note.createdAt,
     updated_at: note.updatedAt,
     completed_at: note.completedAt,
+    ...(note.dueDate !== undefined ? { due_date: note.dueDate } : {}),
   };
 }
 

@@ -61,6 +61,8 @@ export type Note = {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
+  /** Calendar date (YYYY-MM-DD), without a time or timezone. */
+  dueDate?: string | null;
   source: "web" | "slack" | "email";
   origin?: NoteOrigin | null;
   /** Empty only for notes from older browser storage, before workspaces. */
@@ -120,6 +122,7 @@ export function createNote(
     createdAt: now,
     updatedAt: now,
     completedAt: null,
+    dueDate: null,
     source: "web",
     workspaceId,
   };
@@ -137,12 +140,18 @@ export function isNote(value: unknown): value is Note {
     typeof n.createdAt === "string" &&
     typeof n.updatedAt === "string" &&
     (n.completedAt === null || typeof n.completedAt === "string") &&
+    (n.dueDate === undefined || n.dueDate === null || isDueDate(n.dueDate)) &&
     (n.source === undefined ||
       n.source === "web" ||
       n.source === "slack" ||
       n.source === "email") &&
     n.content?.type === "doc"
   );
+}
+export function isDueDate(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith("0000")) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 export const noteRepository = {
   hasLegacyNotes(userId: string): boolean {

@@ -427,6 +427,16 @@ export function NoteEditor({
                   </div>
                 </>
               )}
+              <label htmlFor="note-due-date">Due date</label>
+              <div className="note-due-date">
+                <input
+                  id="note-due-date"
+                  type="date"
+                  value={note.dueDate ?? ""}
+                  onChange={(e) => onUpdate({ dueDate: e.target.value || null })}
+                />
+                {note.dueDate && <button type="button" className="icon-button" aria-label="Clear due date" onClick={() => onUpdate({ dueDate: null })}><X size={14} /></button>}
+              </div>
               <span>Tags</span>
               <div className="tag-editor">
                 {note.tags.map((t) => (

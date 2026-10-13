@@ -44,6 +44,8 @@ Accounts are managed by Supabase Auth. The server verifies the user before rende
 
 Notes are stored in the Supabase `notes` table with row-level security: each signed-in user can read and write only their own rows. The browser talks to `/api/notes`, which uses the signed-in session (never an admin key). Edits save in batches about a second after typing stops, and the list refreshes on focus and every 30 seconds so notes captured elsewhere (Slack) appear.
 
+The home screen's Due items panel shows unfinished notes in the current workspace, grouped into Overdue, Today, and Upcoming. Add or clear a calendar due date in the note editor. Apply `supabase/migrations/20261013000000_note_due_dates.sql` before deploying this feature; it adds the nullable `due_date` column used when loading and saving notes. Dates are interpreted in the viewer's local calendar, without a time of day.
+
 Notes from earlier versions live in this browser's localStorage (`orbit.notes.v1:<user UUID>`, plus unclaimed anonymous notes under `orbit.notes.v1`). After sign-in, **Move my notes** uploads them to the account once. They are never moved automatically, and the originals stay in localStorage as a backup.
 
 Export your notes for a JSON copy; importing exported backups is not implemented. Concurrent edits to the same note from two tabs or devices are last-write-wins. Sign-out/account changes in another tab are checked via an auth event, on focus, and every minute.

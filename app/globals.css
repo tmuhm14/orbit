@@ -3712,3 +3712,66 @@ main {
     justify-content: flex-end;
   }
 }
+
+/* A compact deadline rail alongside the home workspace. */
+main.home-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 264px;
+  gap: 28px;
+  align-items: start;
+  max-width: 1600px;
+  padding-inline: 32px;
+}
+.home-primary { min-width: 0; }
+.due-panel {
+  position: sticky;
+  top: 24px;
+  margin-top: 24px;
+  padding: 18px 16px;
+  border: 1px solid #ffffff12;
+  border-radius: 10px;
+  background: linear-gradient(145deg, #211d2940, #191a1f);
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #332b3e transparent;
+}
+.due-panel-heading { display: flex; align-items: center; gap: 9px; color: #b9a3df; }
+.due-panel-heading h2 { font-size: 14px; font-weight: 550; color: var(--text); margin: 0; }
+.due-count { margin-left: auto; font-size: 11px; padding: 2px 7px; border-radius: 5px; background: #b299ec12; }
+.due-panel-caption { margin: 6px 0 20px; color: var(--muted); font-size: 11px; }
+.due-group + .due-group { margin-top: 20px; }
+.due-group h3 { display: flex; align-items: center; justify-content: space-between; font-size: 10px; letter-spacing: 0.7px; text-transform: uppercase; color: #a499b3; font-weight: 500; margin: 0 0 7px; }
+.due-group.is-overdue h3, .due-group.is-overdue time { color: #dda7a7; }
+.due-group.is-today h3, .due-group.is-today time { color: #d0b185; }
+.due-group h3 span { font-size: 10px; opacity: 0.7; }
+.due-group ul { margin: 0; padding: 0; list-style: none; }
+.due-group li { display: flex; align-items: flex-start; border-top: 1px solid #ffffff09; }
+.due-complete { width: 30px; min-height: 44px; flex: none; display: grid; place-items: center; color: #8f839d; }
+.due-complete svg { box-sizing: content-box; border: 1px solid #8f839d66; border-radius: 50%; padding: 3px; stroke: transparent; }
+.due-complete:hover svg, .due-complete:focus-visible svg { stroke: #91cbb3; border-color: #91cbb3; }
+.due-note { min-width: 0; flex: 1; padding: 11px 4px 11px 3px; text-align: left; border-radius: 5px; }
+.due-note:hover { background: #ffffff04; }
+.due-note strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; font-weight: 450; color: #d0cbd7; }
+.due-note > span { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 8px; margin-top: 5px; font-size: 10px; color: #817889; }
+.due-note time { white-space: nowrap; color: #a499b3; }
+.due-empty { display: grid; justify-items: start; gap: 10px; color: #8d819c; font-size: 12px; line-height: 1.6; padding: 10px 0; }
+.due-empty strong { color: #c2b6d0; font-weight: 500; }
+.due-empty p { margin: 0; }
+.note-properties > label { align-self: center; font-size: 13px; color: var(--muted); }
+.note-due-date { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.note-due-date input { color-scheme: dark; min-width: 0; padding: 6px 8px; border: 1px solid #ffffff14; border-radius: 6px; background: #ffffff04; color: #c8bad8; font: inherit; font-size: 12px; }
+@media (min-width: 1101px) and (max-width: 1450px) {
+  .home-layout .bucket-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .home-layout .welcome-compact .orbital-art { display: none; }
+  .home-layout .welcome-compact .welcome-copy { max-width: 100%; }
+  .home-layout .capture-bottom > span, .home-layout .capture-shortcut { display: none; }
+  .home-layout .capture-bottom { justify-content: flex-end; }
+}
+@media (max-width: 1100px) {
+  main.home-layout { grid-template-columns: minmax(0, 1fr); padding-inline: 25px; gap: 0; }
+  .due-panel { position: static; max-height: none; margin: 0 0 28px; }
+}
+@media (max-width: 700px) {
+  main.home-layout { padding-inline: 22px; }
+}

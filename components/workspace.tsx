@@ -52,6 +52,7 @@ import { useNotes } from "./use-notes";
 import { useSessionWatch } from "./use-session-watch";
 import { useWorkspaces } from "./use-workspaces";
 import { WorkspaceSwitcher, spaceStyle } from "./workspace-switcher";
+import { DueItems } from "./due-items";
 import { signOut } from "@/app/auth/actions";
 
 const icons = {
@@ -530,7 +531,8 @@ export function Workspace({
           onDisconnectSlack={spaces.disconnectSlack}
           onOpenScheduled={() => setScheduledOpen(true)}
           onToast={setToast}
-        /> : <main>
+        /> : <main className={view === "overview" && !search ? "home-layout" : undefined}>
+          <div className="home-primary">
           {browserNoteCount > 0 && !loadError && (
             <div className="legacy-import">
               <p>
@@ -981,6 +983,18 @@ export function Workspace({
               <span className="footer-star">✧</span>
             </span>
           </footer>
+          </div>
+          {view === "overview" && !search && <DueItems
+            notes={notes}
+            workspaceId={workspaceId}
+            unavailable={loadError}
+            onOpen={setSelected}
+            onComplete={(id) => {
+              const now = new Date().toISOString();
+              setNotes(current => current.map(note => note.id === id && note.workspaceId === workspaceId ? { ...note, completedAt: now, updatedAt: now } : note));
+              setToast("Note completed");
+            }}
+          />}
         </main>}
       </div>
       {currentNote && (
