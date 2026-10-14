@@ -97,8 +97,8 @@ A many-to-many `item_links` table (backlinks, "related to", document ↔ project
 
 ```sql
 alter table public.notes
-  add column waiting_on text check (char_length(waiting_on) <= 200),        -- @phi (person names)
-  add column waiting_for text check (char_length(waiting_for) <= 2000),     -- @phi (expected deliverable)
+  add column waiting_on text check (char_length(waiting_on) <= 200),        -- free-text person name
+  add column waiting_for text check (char_length(waiting_for) <= 2000),     -- expected deliverable
   add column next_check_on date
     check (next_check_on is null or next_check_on between date '0001-01-01' and date '9999-12-31');
 create index notes_next_check_idx on public.notes (user_id, next_check_on)
@@ -159,7 +159,7 @@ Naming follows the existing `supabase/migrations/YYYYMMDDHHMMSS_snake_case.sql` 
 | --- | --- | --- | --- |
 | 1 | `20261014000000_note_revisions.sql` | D-01 | ADR 002 |
 | 2 | `20261014000100_note_write_functions.sql` | D-01 | ADR 002 |
-| 3 | `20261015000000_note_kinds_and_project_links.sql` | D-02 | §2, §3: `kind`, `notes_id_workspace_user_key`, `project_id` + FK + trigger; `create or replace` the ADR 002 save/delete functions to accept `kind`, `project_id`, `unlinkChildren`; `@phi` column comments (below) |
+| 3 | `20261015000000_note_kinds_and_project_links.sql` | D-02 | §2, §3: `kind`, `notes_id_workspace_user_key`, `project_id` + FK + trigger; `create or replace` the ADR 002 save/delete functions to accept `kind`, `project_id`, `unlinkChildren` |
 | 4 | `20261016000000_note_followups_and_reminders.sql` | D-03 | §4: follow-up columns, `note_reminders` + RLS (owner select/insert/update/delete mirroring `notes`), revision trigger for reminders; `create or replace` save function for follow-up fields |
 | 5 | `20261017000000_assignments.sql` | A-01 | ADR 003 |
 | 6 | `20261021000000_note_write_enforcement.sql` | D-01 phase C | ADR 002 rollout; applied only after the rollout gate |
@@ -179,11 +179,11 @@ Existing note routes return `{ error: string }`. Responses gain an optional mach
 
 In batch `PUT /api/notes`, relationship failures are per-item results (ADR 002 response shape), not whole-batch failures.
 
-### 8. PHI handling
+### 8. Data scope and logging hygiene
 
-- PHI-capable columns get `comment on column ... is '@phi'` in migration 3, the SQL equivalent of the repository's Drizzle `// @phi` rule: `title`, `content`, `plain_text`, `tags`, `origin`, `source_ref` (email message ids), and in migration 4 `waiting_on`, `waiting_for`. `kind`, `bucket`, `project_id`, dates and revisions are not PHI by themselves.
-- Relationship errors and logs carry item IDs only, never titles. Trigger messages are fixed codes.
-- `waiting_on` may hold a patient's or member's name in a work workspace. It is sent to a model provider only under the same `workspaces.agent_enabled` gate as other note text (`20261010000000_agent.sql`).
+- **Decided by Tony, 2026-10-13:** Orbit will never contain HIPAA/PHI data, Waltz workspaces included. HIPAA compliance scope does not apply to Orbit, and no `@phi` column annotations are added.
+- Hygiene rules still apply: relationship errors and logs carry item IDs only, never titles or bodies. Trigger messages are fixed codes.
+- `waiting_on` / `waiting_for` are free text sent to a model provider only under the same `workspaces.agent_enabled` gate as other note text (`20261010000000_agent.sql`), and only when an agent actually needs them (minimum-necessary context).
 
 ## Consequences
 
@@ -209,5 +209,4 @@ In batch `PUT /api/notes`, relationship failures are per-item results (ADR 002 r
 2. **Nested projects / sub-projects.** Proposed: not in v1. *Decider: Tony/product.*
 3. **Archive state for projects** beyond `completed_at`. *Decider: product. Blocks: project deletion UX in U-03.*
 4. **Follow-up fields only on `kind = 'followup'`?** Proposed: allowed on any kind. *Decider: product.*
-5. **Should Waltz (work) workspaces be in HIPAA scope at all**, i.e. may they hold PHI? This sets whether `@phi` columns need access auditing (ADR 004) now or later. *Decider: Tony + compliance.*
-6. **Supabase Postgres version** supports `ON DELETE SET NULL (column)` — confirm, otherwise use a trigger. *Owner: Lead before D-02.*
+5. **Supabase Postgres version** supports `ON DELETE SET NULL (column)` — confirm, otherwise use a trigger. *Owner: Lead before D-02.*

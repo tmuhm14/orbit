@@ -32,7 +32,7 @@ create table public.assignments (
   workspace_id uuid not null,
   source_note_id uuid,                                   -- the task being delegated; null only after the task is deleted
   requested_outcome text not null
-    check (char_length(btrim(requested_outcome)) between 1 and 4000),   -- @phi; the only text that grants intent
+    check (char_length(btrim(requested_outcome)) between 1 and 4000),   -- the only text that grants intent
   executor_kind text not null default 'builtin' check (executor_kind in ('builtin', 'external')),
   executor_id uuid,                                      -- agent client id (ADR 004 / A-05); null for builtin
   capabilities text[] not null default '{workspace.read,assignment.execute}',
@@ -107,8 +107,8 @@ create table public.assignment_questions (
   assignment_id uuid not null references public.assignments (id) on delete cascade,
   attempt_id uuid not null references public.assignment_attempts (id),
   user_id uuid not null,
-  prompt text not null check (char_length(prompt) <= 2000),     -- @phi
-  answer text check (char_length(answer) <= 4000),              -- @phi; user-authored, grants intent
+  prompt text not null check (char_length(prompt) <= 2000),
+  answer text check (char_length(answer) <= 4000),              -- user-authored, grants intent
   asked_at timestamptz not null default now(),
   answered_at timestamptz
 );
@@ -121,9 +121,9 @@ create table public.assignment_artifacts (
   attempt_id uuid not null references public.assignment_attempts (id),
   user_id uuid not null,
   kind text not null check (kind in ('draft', 'summary')),
-  title text not null check (char_length(title) <= 200),        -- @phi
-  content jsonb not null,                                       -- @phi; Tiptap doc, same limits as notes
-  plain_text text not null default '',                          -- @phi
+  title text not null check (char_length(title) <= 200),
+  content jsonb not null,                                       -- Tiptap doc, same limits as notes
+  plain_text text not null default '',
   source_note_ids uuid[] not null default '{}',                 -- context items the executor cited
   saved_note_id uuid,                                           -- document item created from it (§6)
   superseded_at timestamptz,                                    -- set when a newer artifact replaces it
@@ -136,7 +136,7 @@ create table public.assignment_reviews (
   artifact_id uuid not null references public.assignment_artifacts (id),
   user_id uuid not null,
   decision text not null check (decision in ('accept', 'request_changes', 'reject')),
-  comment text check (char_length(comment) <= 4000),            -- @phi; user-authored, grants intent
+  comment text check (char_length(comment) <= 4000),            -- user-authored, grants intent
   decided_at timestamptz not null default now()
 );
 
@@ -252,13 +252,13 @@ After `accept`, the user can save the artifact as an item: `kind = 'document'`, 
 - The Agents page (U-05) shows both histories side by side; they are distinct record types.
 - If organizing runs later need questions/review, they can become assignments of a new executor type; this ADR does not require it.
 
-### 8. Untrusted content and PHI
+### 8. Untrusted content and data hygiene
 
 - Captured material (context items, Slack/email text) is data, never instructions. The executor system prompt follows `agentSystemPrompt()`'s rule, and **server checks enforce scope independently of model output**: tool handlers accept only ids in `assignment_context_items` for this assignment, and capabilities are read from the assignment row, never from model output.
 - Only `requested_outcome`, question answers and `request_changes` comments (all user-authored) grant intent.
-- Context is sent to the model provider only for explicitly selected items, under `agent_enabled` (minimum necessary). In a workspace that may hold PHI this is a disclosure to the provider; see open question 5.
-- `requested_outcome`, questions, answers, artifacts and review comments are PHI-capable (`@phi` column comments in the migration). Logs carry assignment/attempt ids, state and `error_code` only. `lease_token` is a credential and is never logged or returned to browsers.
-- Viewing an assignment's artifacts is PHI access for audit purposes when the workspace is in scope (ADR 004).
+- Context is sent to the model provider only for explicitly selected items, under `agent_enabled` (minimum-necessary context). **Decided by Tony, 2026-10-13:** there is no HIPAA blocker to sending selected context to the user's BYO-key provider in any workspace, Waltz included, because Orbit holds no PHI. It remains opt-in through the user's selection and the workspace switch.
+- Never log `requested_outcome`, questions, answers, artifacts, review comments or model output. Logs carry assignment/attempt ids, state and `error_code` only. `lease_token` is a credential and is never logged or returned to browsers.
+- External-agent reads of artifacts are recorded in the grant audit trail (ADR 004).
 
 ## Consequences
 
@@ -280,6 +280,5 @@ After `accept`, the user can save the artifact as an item: `kind = 'document'`, 
 1. **Allowed source kinds.** Proposed: `task` and `followup` only; should `project` be delegable? *Decider: product.*
 2. **One active assignment per task** — keep, or allow parallel assignments? *Decider: product.*
 3. **Reject maps to `canceled`** (with a `reject` review) — confirm. *Decider: Tony.*
-4. **Artifact retention** after reject/cancel (keep forever, 30 days, or until the task is deleted). *Decider: Tony + compliance.*
-5. **Model-provider disclosure for work workspaces.** Is sending selected context from a workspace that may hold PHI to a BYO-key provider acceptable, and under what agreement? `// TODO: HIPAA review needed`. *Decider: Tony + compliance. Blocks: enabling A-02 in non-Personal workspaces.*
-6. **Lease length and heartbeat interval** for the interim built-in executor (proposed 90 s lease, 30 s heartbeat, under the route's `maxDuration = 300`). *Owner: Agents.*
+4. **Artifact retention** after reject/cancel (keep forever, 30 days, or until the task is deleted). *Decider: Tony.*
+5. **Lease length and heartbeat interval** for the interim built-in executor (proposed 90 s lease, 30 s heartbeat, under the route's `maxDuration = 300`). *Owner: Agents.*

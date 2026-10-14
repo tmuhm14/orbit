@@ -149,7 +149,7 @@ Success sets `undone_at`, `undone_by` in the same transaction and returns `{ und
 - On `saved` results, record the returned revision. On `conflict`, move the item to a `conflicts` map `{ local, server }`, **stop auto-resending it** (prevents a retry loop), and surface it.
 - `mergeServerNotes()` detects conflicts early: a dirty local note whose server revision is higher than its synced base becomes a conflict without waiting for a failed save.
 - Recovery choices (U-02): **Keep mine** (resend with `expectedRevision = currentRevision`), **Use theirs** (replace local), **Save mine as a copy** (new id, create-only, durable in the account).
-- Drafts are retained **in memory for the life of the tab**, with a `beforeunload` warning while conflicts are unresolved. Persisting drafts to `localStorage`/IndexedDB is an open question pending HIPAA review: the app already keeps legacy notes under `orbit.notes.v1`, but new PHI copies in browser storage need a decision. "Save mine as a copy" is the durable recovery path in the meantime.
+- Drafts are retained in memory for the tab and **persisted to browser storage** so a reload or crash does not lose them. **Decided by Tony, 2026-10-13** (Orbit holds no HIPAA/PHI data). Key: `orbit.drafts.v1:<userId>:<noteId>` in `localStorage`, following the existing `orbit.notes.v1` naming. Each entry holds `{ local, baseRevision, savedAt }`. It is removed when the conflict is resolved, and D-01 also clears these keys on sign-out. A `beforeunload` warning still shows while conflicts are unresolved. "Save mine as a copy" stays available as the cross-device recovery path.
 
 ### 7. Rollout for old clients and every writer
 
@@ -178,12 +178,12 @@ Per-writer plan:
 | Scheduled reports | None today. A future "save report as note" uses `save_notes` create-only. | Create-only |
 | Assignments (ADR 003) | Saving an artifact as a document is a user create through `save_notes` | Create-only |
 
-### 8. PHI handling
+### 8. Logging and data hygiene
 
 - Conflict and undo errors carry ids, revisions and column names only. No titles, content, `origin` or reasons in error messages or logs.
 - The legacy-write counter and conflict metrics record counts per route and outcome only.
-- `agent_actions.before/after` already store copies of note content (PHI-capable). This ADR does not widen that; retention for that history is an open question.
-- The `current` copy in a 409 goes only to the owning session, matching what that session can already `GET`.
+- `agent_actions.before/after` already store copies of note content. This ADR does not widen that; retention for that history is an open question.
+- The `current` copy in a 409 goes only to the owning session, matching what that session can already `GET` (minimum necessary for external callers, §3).
 
 ## Consequences
 
@@ -199,13 +199,12 @@ Per-writer plan:
 - **Conditional `update ... where revision = n` through PostgREST** instead of functions. Works for single rows, but not for upsert batches, create-only semantics, or atomic agent audit. Rejected.
 - **`If-Match` / ETag headers with 412.** Idiomatic HTTP, but the batch PUT needs per-item revisions in the body anyway. One body/query convention and one 409 `revision_conflict` code keep a single client path. Can be added as an alias later.
 - **Field-level merge (CRDT/OT) on content.** Collaborative editing is explicitly out of scope; too heavy for the first release.
-- **Store conflicted drafts server-side (`note_drafts` table).** Durable and multi-device, but it makes another PHI copy and adds a lifecycle to manage. Deferred; "Save mine as a copy" covers durability.
+- **Store conflicted drafts server-side (`note_drafts` table).** Durable and multi-device, but it adds another content copy and a lifecycle to manage. Deferred; browser storage plus "Save mine as a copy" cover recovery.
 - **Enforce immediately.** Would break open tabs mid-edit with no recovery. Rejected for the phased rollout.
 
 ## Open questions
 
 1. **Phase B → C gate.** Proposed: at least 14 days and 7 days of zero legacy writes. *Decider: Tony.*
-2. **Durable local draft storage** (localStorage/IndexedDB) for conflicted edits. `// TODO: HIPAA review needed`. *Decider: Tony + compliance. Blocks: U-02 recovery scope.*
-3. **Retention of `agent_actions.before/after`** (content copies). Proposed: keep for undo for 30 days, then null the values but keep the row. *Decider: Tony.*
-4. **Telemetry sink** for the legacy-write counter (Vercel logs vs. a table). *Owner: Lead.*
-5. **Does the agent retry once on conflict, or report immediately?** Proposed: one re-read. *Owner: Agents.*
+2. **Retention of `agent_actions.before/after`** (content copies). Proposed: keep for undo for 30 days, then null the values but keep the row. *Decider: Tony.*
+3. **Telemetry sink** for the legacy-write counter (Vercel logs vs. a table). *Owner: Lead.*
+4. **Does the agent retry once on conflict, or report immediately?** Proposed: one re-read. *Owner: Agents.*

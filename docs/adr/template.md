@@ -9,7 +9,7 @@
 ## Context
 
 What is true today, grounded in the code (file paths, tables, routes). What forces
-the decision: product needs, constraints, risks, HIPAA/PHI considerations.
+the decision: product needs, constraints, risks, data-handling considerations (what is logged, stored, or sent to third parties).
 
 ## Decision
 

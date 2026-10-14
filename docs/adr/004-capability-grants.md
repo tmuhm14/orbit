@@ -25,7 +25,7 @@ Gaps:
 2. An external agent is indistinguishable from the user. It holds a full user JWT, so outside Orbit's `/api/v1` routes it could call PostgREST directly with owner RLS rights. Turning off `agent_enabled` stops `/api/v1`, but not that token.
 3. A Supabase access token can't be revoked before it expires (about 1 hour by default); refresh tokens live in the bot's store.
 4. No notion of external write; outbound actions (I-05) need per-action authority plus payload approval.
-5. No access audit. The repository HIPAA rules require auditing PHI access; this repo has no `auditPhiAccess()` helper (the `src/lib/audit.ts` the global rules reference does not exist here).
+5. No audit trail of what an integration read or changed. `agent_actions` covers only organizing-agent edits; `/api/v1` reads and captures leave no record, so a user cannot see what a leaked or misbehaving bot token did.
 
 ## Decision
 
@@ -105,7 +105,7 @@ authorize(admin, {
 - `workspaces.agent_enabled` remains the **kill switch**: when false, every non-owner principal is denied in that workspace, whatever the grants say. The existing Settings toggle keeps its meaning.
 - **Long-running work re-checks at step boundaries:** each built-in executor tool call, each external `heartbeat`/`submit`. On denial the attempt stops; the assignment goes to `failed` with `capability_revoked` (ADR 003 T15/T16). A revoked `external.write` invalidates pending approvals that depend on it.
 - Model output never grants or widens anything. Capabilities come from grant rows and the user-authored assignment row only.
-- Every check that reads PHI-capable data for a non-owner principal writes an access-audit row (§5).
+- Every allowed operation by an `agent_client` principal (and the transitional `user_token` principal on `/api/v1`) writes an access-audit row (§5). Built-in agent operations are already recorded in `agent_runs`/`agent_actions` and assignment events.
 
 ### 4. Compatibility with today's switch
 
@@ -118,12 +118,15 @@ A-05 migration seeds grants so behavior is unchanged on day one:
 | `agent_enabled = true` | `builtin_agent`: `workspace.read`, `item.write {operations: [create, update]}`, `assignment.execute` |
 | v1 API callers (user JWT) | No row. They remain a transitional `user_token` principal limited to today's `/api/v1` operations (`workspace.read` + `item.write {create}`), gated by `agent_enabled`. |
 
+**Waltz and other work workspaces** follow the same seeding rule as Personal: grants follow `agent_enabled`, with no extra zero-grant default. **Decided by Tony, 2026-10-13:** no HIPAA reason exists to start them with zero built-in agent grants, since Orbit holds no PHI. `agent_enabled` itself stays off by default for new workspaces, as set by `20261010000000_agent.sql`.
+
 **Deprecation of user-JWT integrations:** once `agent_clients` credentials exist, `/api/v1` accepts both for one announced window, then user JWTs are refused on `/api/v1` with `401 credential_type_unsupported`. `docs/api/agents.md` and `openapi.json` get a new `securityScheme`. The token-held-by-bot issue (gap 2) is closed only when bots stop holding user JWTs; ADR 002 phase C′ (revoking direct DML for `authenticated`) narrows what a leaked JWT can do in the meantime.
 
-### 5. Audit and PHI
+### 5. Grant and access audit trail
 
+- **Decided by Tony, 2026-10-13:** Orbit will never contain HIPAA/PHI data, Waltz workspaces included, so no PHI access auditing is required. The audit trail below is kept as a **security control for external agents and grants**, not a compliance requirement.
 - `capability_grants` rows (granted/revoked/expired) are the grant history. No secrets are stored; `credential_hash` uses a slow hash and the plaintext is shown once.
-- New table `access_audit_events` (A-05, same migration): `user_id`, `principal_type`, `principal_id`, `action` (e.g. `item.read`, `item.write`, `assignment.artifact.read`), `resource_type`, `resource_id`, `workspace_id`, `occurred_at`. **No content, titles or payloads.** Written by `lib/audit.ts` (`auditPhiAccess()`, matching the repository standard's helper name and required fields `userId`, `action`, `resourceType`, `resourceId`, `timestamp`). The audit table is insert-only (`service_role`); owners may read their own rows.
+- New table `access_audit_events` (A-05, same migration), written for external principals only: `user_id`, `principal_type`, `principal_id`, `action` (e.g. `item.read`, `item.write`, `assignment.claim`, `assignment.artifact.submit`, `grant.denied`), `resource_type`, `resource_id`, `workspace_id`, `occurred_at`. **No content, titles or payloads.** Written by a small server-only helper `recordAccess()` in `lib/grants/audit.ts`. The table is insert-only (`service_role`); owners read their own rows in Settings → Connections, which lets them see what an agent did before revoking it. Retention: 90 days (open question 3).
 - Denials return generic messages and log principal id, capability and code only. Credentials and bearer tokens are never logged (A-05 done criterion).
 
 ### 6. Error contract
@@ -141,7 +144,7 @@ A-05 migration seeds grants so behavior is unchanged on day one:
 ## Consequences
 
 - Read-only, capture-only and execute-only agents become possible, and revoking any of them works on the next request.
-- Every operation for a non-owner principal costs one indexed lookup (plus an audit insert where PHI is read). Acceptable at current scale; revisit if hot.
+- Every operation for a non-owner principal costs one indexed lookup (plus an audit insert for external principals). Acceptable at current scale; revisit if hot.
 - External integrations must migrate credentials once; docs and MCP adapter (`scripts/orbit-mcp.mjs`) change in A-05/A-06.
 - Tests (A-05): grant/deny per capability and scope; revocation mid-assignment fails the attempt on the next step; kill switch overrides grants; a credential is never present in logs; audit rows written without content.
 
@@ -156,7 +159,6 @@ A-05 migration seeds grants so behavior is unchanged on day one:
 
 1. **External agent credential type:** Orbit-issued API keys (hashed, revocable), OAuth 2.1 (hosted MCP), or Supabase JWTs with server-side grants. *Decider: Tony. Blocks: A-05 ("auth ADR" in the plan should be a follow-up ADR once chosen).*
 2. **Deprecation window** for user-JWT `/api/v1` access. *Decider: Tony.*
-3. **Is `access_audit_events` required for all workspaces or only ones flagged as possibly holding PHI** (needs a workspace-level flag)? `// TODO: HIPAA review needed`. *Decider: Tony + compliance.*
+3. **Retention for `access_audit_events`.** Proposed: 90 days. *Decider: Tony.*
 4. **Should `item.write {update}` be grantable to external agents in v1** (it needs the ADR 002 expected-revision contract on a new v1 endpoint)? *Decider: Tony.*
 5. **Do Slack links and email inbox tokens become grants** (`item.write {create}` for a `connection` principal), or stay as their own mechanisms? Proposed: stay as is until I-01. *Owner: Integrations.*
-6. **Should Waltz workspaces default to no built-in agent grants** even if `agent_enabled` is toggled on, pending content review (as the agent migration comment suggests)? *Decider: Tony.*

@@ -54,7 +54,7 @@ Placement of current and planned work:
 - **Cancellation** is a state change in Postgres checked at each step, plus lease revocation; workers never rely on the queue to stop them.
 - **Retries** with capped exponential backoff and a maximum attempt count stored with the work (`assignments.max_attempts`). Poison jobs end in `failed` with a normalized code, never in a silent dead-letter.
 - **Recovery after process loss** is the default path: an expired lease is detected by the reaper and handled per the transition table.
-- **Grant re-checks per step** (ADR 004) and **no PHI in job payloads** (§5).
+- **Grant re-checks per step** (ADR 004) and **ids-only job payloads** (§5).
 
 ### 3. Adapter boundary (A-04)
 
@@ -80,7 +80,7 @@ No workflow vendor is introduced as an incidental dependency. The choice is made
 1. **Hosting fit.** Works with Vercel functions and the actual plan limits (`maxDuration`, cron frequency, concurrency), which must be verified; workers can run where Supabase is reachable.
 2. **Delivery model.** At-least-once with visible retries, delay/scheduled delivery (reminders at `fire_at`), and cancellation or safe no-op on canceled work.
 3. **Long-running and waiting work.** Supports steps beyond one function's duration and resume-after-human-input without holding a process.
-4. **Data handling (HIPAA).** Payloads carry ids only. If any vendor would receive or log PHI, it must sign a BAA; prefer vendors that don't need it. Data residency and log retention are known.
+4. **Data handling.** Payloads carry ids only, so the vendor never receives note bodies, model output, secrets or raw connector payloads. Data residency and log retention are known. (No BAA requirement: Orbit holds no PHI, decided by Tony, 2026-10-13.)
 5. **Observability without content.** Per-job status, attempts, latency and errors visible without logging bodies, model output, secrets or raw connector payloads.
 6. **Cost.** Predictable at expected volume (jobs per user per day), with no paid tier required for development.
 7. **Local development and tests.** Runs locally or has a faithful emulator; deterministic tests for restart, expired lease, duplicate delivery, retry and cancel (A-04 done criterion).
@@ -90,7 +90,7 @@ No workflow vendor is introduced as an incidental dependency. The choice is made
 
 Candidates to evaluate (no preference implied): a Postgres queue on Supabase (own `jobs` table with `for update skip locked`, or Supabase Queues/pgmq) with cron or `pg_cron` wake-ups; Vercel Queues/Workflow; Inngest; Trigger.dev; Temporal Cloud; Azure Service Bus with a worker.
 
-### 5. PHI and logging
+### 5. Payload and logging hygiene
 
 - Job payloads and vendor-visible metadata: ids, types, attempt numbers and normalized error codes only.
 - Workers load content from Postgres at execution time under grant checks (ADR 004), so revocation and deletion apply to queued work.
@@ -111,7 +111,7 @@ The runtime has no user-facing API of its own. User-visible state is the owning 
 
 - **Use `after()` for everything.** No recovery after process loss, no retries, capped by `maxDuration`. Rejected beyond tier 2.
 - **Pick a workflow vendor now.** The plan forbids an incidental vendor dependency before hosting limits and cost are verified. Rejected for now.
-- **Vendor as source of truth for workflow state** (e.g. durable-function state only). Makes Orbit state depend on the vendor's storage and complicates PHI review. Rejected; Postgres stays authoritative.
+- **Vendor as source of truth for workflow state** (e.g. durable-function state only). Makes Orbit state depend on the vendor's storage and complicates data-handling review. Rejected; Postgres stays authoritative.
 - **Run a long-lived worker process immediately.** New hosting surface and operations before it's needed. Deferred to the vendor decision.
 
 ## Open questions
