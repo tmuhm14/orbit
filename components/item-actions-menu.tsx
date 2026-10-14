@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { Check, Ellipsis, SquareArrowOutUpRight } from "lucide-react";
 import type { BucketId, Note } from "@/lib/notes";
 import { menuIndex, menuPlacement, moveTargets } from "@/lib/item-actions";
@@ -11,26 +11,31 @@ import { bucketIcons, useWorkspaceShell } from "./workspace-shell-context";
  * After an action removes the row, keep keyboard focus nearby: the next or
  * previous row, else the section heading.
  */
-function focusAfter(button: HTMLButtonElement) {
+function focusTargets(button: HTMLButtonElement) {
   const row = button.closest("li");
-  const neighbor = row?.nextElementSibling ?? row?.previousElementSibling;
-  const scope = button.closest("section, aside");
-  requestAnimationFrame(() => {
-    if (button.isConnected) {
-      button.focus();
-      return;
-    }
-    const next = neighbor?.isConnected ? neighbor.querySelector<HTMLElement>("button") : null;
-    if (next) {
-      next.focus();
-      return;
-    }
-    const heading = scope?.isConnected ? scope.querySelector<HTMLElement>("h2, h3") : null;
-    if (heading) {
-      heading.tabIndex = -1;
-      heading.focus();
-    }
-  });
+  return {
+    button,
+    neighbor: row?.nextElementSibling ?? row?.previousElementSibling,
+    scope: button.closest("section, aside"),
+  };
+}
+
+/** Runs after the action has been committed to the DOM (see `run`). */
+function focusAfter({ button, neighbor, scope }: ReturnType<typeof focusTargets>) {
+  if (button.isConnected) {
+    button.focus();
+    return;
+  }
+  const next = neighbor?.isConnected ? neighbor.querySelector<HTMLElement>("button") : null;
+  if (next) {
+    next.focus();
+    return;
+  }
+  const heading = scope?.isConnected ? scope.querySelector<HTMLElement>("h2, h3") : null;
+  if (heading) {
+    heading.tabIndex = -1;
+    heading.focus();
+  }
 }
 
 /**
@@ -100,10 +105,14 @@ export function ItemActionsMenu({ note, className = "" }: { note: Note; classNam
     if (restoreFocus) buttonRef.current?.focus();
   }
   function run(action: () => void) {
-    const button = buttonRef.current;
-    setOpen(false);
-    action();
-    if (button) focusAfter(button);
+    // Note the neighbors first, then commit the removal before choosing where
+    // focus goes; otherwise focus is lost when React removes the row.
+    const targets = buttonRef.current ? focusTargets(buttonRef.current) : null;
+    flushSync(() => {
+      setOpen(false);
+      action();
+    });
+    if (targets) focusAfter(targets);
   }
 
   function onButtonKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
