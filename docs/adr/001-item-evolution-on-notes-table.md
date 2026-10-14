@@ -1,6 +1,6 @@
 # 001 — Evolve the `notes` table into typed, linkable items
 
-- **Status:** Proposed — awaiting Tony's approval
+- **Status:** Accepted — approved by Tony, 2026-10-13
 - **Date:** 2026-10-13
 - **Ticket:** O-01 (decides the contract for D-02 and D-03; depends on ADR 002 for D-01)
 - **Deciders:** Tony (Solutions Architect)

@@ -1,6 +1,6 @@
 # 003 — Assignments: delegated outcome work, separate from organizing runs
 
-- **Status:** Proposed — awaiting Tony's approval
+- **Status:** Accepted — approved by Tony, 2026-10-13
 - **Date:** 2026-10-13
 - **Ticket:** O-01 (contract for A-01; consumed by A-02, U-04, U-05, A-04, A-06)
 - **Deciders:** Tony (Solutions Architect)

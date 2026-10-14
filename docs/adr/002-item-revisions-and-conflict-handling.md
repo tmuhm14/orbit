@@ -1,6 +1,6 @@
 # 002 — Server-managed item revisions, conflict handling and safe agent undo
 
-- **Status:** Proposed — awaiting Tony's approval
+- **Status:** Accepted — approved by Tony, 2026-10-13
 - **Date:** 2026-10-13
 - **Ticket:** O-01 (contract for D-01; consumed by D-02, D-03, A-01, A-06, K-01)
 - **Deciders:** Tony (Solutions Architect)

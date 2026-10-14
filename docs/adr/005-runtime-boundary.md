@@ -1,6 +1,6 @@
 # 005 — Runtime boundary: in-request, bounded background, and durable execution
 
-- **Status:** Proposed — awaiting Tony's approval
+- **Status:** Accepted — approved by Tony, 2026-10-13
 - **Date:** 2026-10-13
 - **Ticket:** O-01 (the "runtime ADR" that gates A-04; affects A-02, D-04, I-05)
 - **Deciders:** Tony (Solutions Architect)

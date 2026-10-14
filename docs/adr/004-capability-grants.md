@@ -1,6 +1,6 @@
 # 004 — Capability grants with server-enforced revocation
 
-- **Status:** Proposed — awaiting Tony's approval
+- **Status:** Accepted — approved by Tony, 2026-10-13
 - **Date:** 2026-10-13
 - **Ticket:** O-01 (contract for A-01's capability check; implemented in A-05; used by A-06, I-01–I-05, K-02)
 - **Deciders:** Tony (Solutions Architect)
