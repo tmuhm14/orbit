@@ -8,10 +8,17 @@ import {
   applySaveResults,
   browserNotes,
   createNote,
+  exportDocument,
+  itemKind,
   mergeServerNotes,
   noteDrafts,
   pendingWrites,
+  projectChildren,
+  projectLinkError,
+  projectsIn,
   type ConflictInfo,
+  type ItemKind,
+  type LinkErrorCode,
   type Note,
   type NoteWrite,
   type SaveResponse,
@@ -34,6 +41,14 @@ export type NoteConflict = ConflictInfo & {
   local: Note | null;
   detectedAt: string;
 };
+
+/**
+ * A kind or project change the server refused (ADR 001 §7). The local edit
+ * is kept but not resent until the note changes again.
+ */
+export type ItemError = { id: string; code: LinkErrorCode };
+/** A project delete refused because items still link to it. */
+export type BlockedDelete = { id: string; count: number };
 
 async function api(path: string, init?: RequestInit) {
   const response = await fetch(path, {
@@ -80,6 +95,15 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
   >(new Map());
   const [deleteConflictIds, setDeleteConflictIds] = useState<string[]>([]);
   const [reloadRequired, setReloadRequired] = useState(false);
+  // Refused link changes: id → code and the updatedAt that was refused.
+  const [rejectedMap, setRejectedMap] = useState<
+    ReadonlyMap<string, { code: LinkErrorCode; updatedAt: string }>
+  >(new Map());
+  const rejectedRef = useRef(rejectedMap);
+  rejectedRef.current = rejectedMap;
+  const [blockedDeletes, setBlockedDeletes] = useState<BlockedDelete[]>([]);
+  // Project deletes the user confirmed: linked items move up to its parent.
+  const unlinkOnDelete = useRef(new Set<string>());
   const loadError = initialNotes === null;
   // What the server last confirmed for each note: its revision and the local
   // updatedAt that was saved. A note whose updatedAt differs locally has
@@ -146,6 +170,17 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
     }
   }
 
+  function setRejected(
+    update: (map: Map<string, { code: LinkErrorCode; updatedAt: string }>) => void,
+  ) {
+    const next = new Map(rejectedRef.current);
+    update(next);
+    rejectedRef.current = next;
+    setRejectedMap(next);
+  }
+  const heldWrites = () =>
+    new Map([...rejectedRef.current].map(([id, r]) => [id, r.updatedAt]));
+
   async function flush(keepalive = false) {
     if (saving.current || loadError) return;
     const conflicted = new Set(conflictsRef.current.keys());
@@ -153,6 +188,7 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
       notesRef.current,
       synced.current,
       conflicted,
+      heldWrites(),
     );
     if (!changed.length && !deleted.length) return;
     let failed = false;
@@ -170,18 +206,53 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
         const applied = applySaveResults(synced.current, changed, results);
         synced.current = applied.synced;
         addConflicts(applied.conflicts);
+        const savedIds = results.filter((r) => r.status === "saved").map((r) => r.id);
+        if (applied.rejected.length || savedIds.some((id) => rejectedRef.current.has(id)))
+          setRejected((map) => {
+            for (const id of savedIds) map.delete(id);
+            for (const r of applied.rejected)
+              map.set(r.id, { code: r.code, updatedAt: r.updatedAt });
+          });
         if (applied.failed) failed = true;
       }
+      let unlinked = false;
       for (const { id, expectedRevision } of deleted) {
-        const query =
-          expectedRevision === null ? "" : `?expectedRevision=${expectedRevision}`;
+        const params = new URLSearchParams();
+        if (expectedRevision !== null)
+          params.set("expectedRevision", String(expectedRevision));
+        const unlink = unlinkOnDelete.current.has(id);
+        if (unlink) params.set("unlinkChildren", "true");
+        const search = params.toString();
+        const query = search ? `?${search}` : "";
         const { status, body, minClient } = await write(
           `/api/notes/${id}${query}`,
           { method: "DELETE", keepalive },
         );
         checkClient(minClient);
-        if (status === 200 || status === 404) synced.current.delete(id);
-        else if (status === 409 && body.code === "revision_conflict" && body.current) {
+        if (status === 200 || status === 404) {
+          synced.current.delete(id);
+          unlinkOnDelete.current.delete(id);
+          if (unlink) unlinked = true;
+        } else if (
+          status === 409 &&
+          body.code === "project_has_linked_items" &&
+          body.current
+        ) {
+          // Items still link to it: restore it until the user confirms.
+          const current = body.current as Note;
+          synced.current.set(id, {
+            revision: current.revision ?? null,
+            updatedAt: current.updatedAt,
+          });
+          unlinkOnDelete.current.delete(id);
+          setNotes((list) =>
+            list.some((n) => n.id === id) ? list : [current, ...list],
+          );
+          setBlockedDeletes((list) => [
+            ...list.filter((b) => b.id !== id),
+            { id, count: Number(body.count) || 0 },
+          ]);
+        } else if (status === 409 && body.code === "revision_conflict" && body.current) {
           // Changed elsewhere: restore it here instead of deleting.
           const current = body.current as Note;
           synced.current.set(id, {
@@ -195,6 +266,8 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
         } else failed = true;
       }
       setStorageError(failed);
+      // Linked items moved up on the server; pick up their new revisions.
+      if (unlinked) setTimeout(() => void refresh(), 0);
     } catch {
       failed = true;
       setStorageError(true);
@@ -207,6 +280,7 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
       notesRef.current,
       synced.current,
       new Set(conflictsRef.current.keys()),
+      heldWrites(),
     );
     if (!failed && (rest.changed.length || rest.deleted.length))
       setTimeout(() => void flush(), SAVE_DELAY);
@@ -384,11 +458,82 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
       tags: local.tags,
       completedAt: local.completedAt,
       dueDate: local.dueDate ?? null,
+      kind: itemKind(local),
+      projectId: local.projectId ?? null,
     };
     takeTheirs(id);
     setNotes((list) => [copy, ...list]);
     return copy.id;
   }
+
+  // --- Kinds and project links (ADR 001; U-02 builds the UI on these) -------
+
+  /** Applies an edit to one note as a local change, saved with the next flush. */
+  function editNote(id: string, patch: Partial<Note>) {
+    const updatedAt = new Date().toISOString();
+    setNotes((list) =>
+      list.map((n) => (n.id === id ? { ...n, ...patch, updatedAt } : n)),
+    );
+  }
+
+  /**
+   * Changes what an item is. Returns a code instead of changing anything
+   * when the database would refuse it (a project that still has linked
+   * items, or a linked note that would make the project chain too deep).
+   * Never changes the bucket.
+   */
+  function setKind(id: string, kind: ItemKind): LinkErrorCode | null {
+    const note = notesRef.current.find((n) => n.id === id);
+    if (!note) return null;
+    const error = projectLinkError(notesRef.current, id, note.projectId ?? null, kind);
+    if (error) return error;
+    editNote(id, { kind });
+    return null;
+  }
+
+  /**
+   * Links an item to a project in the same workspace, or unlinks it with
+   * null. Returns a code instead of changing anything when the link would be
+   * refused (not a project, other workspace, self, cycle, depth).
+   */
+  function setProject(id: string, projectId: string | null): LinkErrorCode | null {
+    const error = projectLinkError(notesRef.current, id, projectId);
+    if (error) return error;
+    editNote(id, { projectId });
+    return null;
+  }
+
+  /**
+   * Deletes a note. A project with linked items is refused by the server and
+   * restored here (see blockedDeletes) unless unlinkChildren, which moves its
+   * direct items up to its parent project (or to no project).
+   */
+  function deleteNote(id: string, { unlinkChildren = false } = {}) {
+    if (unlinkChildren) unlinkOnDelete.current.add(id);
+    setBlockedDeletes((list) => list.filter((b) => b.id !== id));
+    setNotes((list) => list.filter((n) => n.id !== id));
+  }
+
+  /**
+   * Drops a refused change and goes back to the saved copy. (Editing the note
+   * again, for example picking another project, also clears the error once
+   * that save succeeds.)
+   */
+  function revertItemChange(id: string) {
+    const local = notesRef.current.find((n) => n.id === id);
+    setRejected((map) => void map.delete(id));
+    if (!local) return;
+    // Never saved: keep the new note, without the refused link.
+    if (!synced.current.has(id)) return editNote(id, { projectId: null });
+    // Clean, with an unknown revision: the next refresh adopts the server copy.
+    synced.current.set(id, { revision: null, updatedAt: local.updatedAt });
+    void refresh();
+  }
+
+  const itemErrors = useMemo(
+    () => [...rejectedMap].map(([id, r]): ItemError => ({ id, code: r.code })),
+    [rejectedMap],
+  );
 
   const conflicts = useMemo(
     () =>
@@ -422,5 +567,27 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
     dismissDeleteConflicts: () => setDeleteConflictIds([]),
     /** The server needs a newer client; saving resumes after a reload. */
     reloadRequired,
+    // Kinds and project links (ADR 001 §2–3). Codes are LinkErrorCode; use
+    // LINK_ERROR_MESSAGES from lib/notes for user-facing text.
+    setKind,
+    setProject,
+    deleteNote,
+    /** Projects in a workspace, by title. */
+    projectsFor: (workspaceId: string) => projectsIn(notes, workspaceId),
+    /** Items linked directly to a project. */
+    childrenOf: (projectId: string) => projectChildren(notes, projectId),
+    /** Whether a link would be accepted; null when it would. */
+    linkErrorFor: (id: string, projectId: string | null, kind?: ItemKind) =>
+      projectLinkError(notes, id, projectId, kind),
+    /** Kind or project changes the server refused; kept locally, not resent. */
+    itemErrors,
+    itemErrorFor: (id: string) => itemErrors.find((e) => e.id === id) ?? null,
+    revertItemChange,
+    /** Project deletes refused because items link to them (restored here). */
+    blockedDeletes,
+    dismissBlockedDelete: (id: string) =>
+      setBlockedDeletes((list) => list.filter((b) => b.id !== id)),
+    /** The JSON backup (version 2, with kind and projectId). */
+    exportData: () => exportDocument(notesRef.current),
   };
 }
