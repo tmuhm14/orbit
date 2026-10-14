@@ -117,7 +117,7 @@ Response status, by precedence over the items: any `conflict` → **409** `revis
   2. Locks the note with `for update`, scoped to that user and workspace; missing → `not_found`.
   3. If `revision <> p_expected_revision` → returns `{ status: "conflict" }` and writes nothing.
   4. Filters `p_after` to the restorable column whitelist (today's `RESTORABLE` list in the undo route, moved into the function), computes `before` from the locked row, updates the note (trigger bumps revision), and inserts `agent_actions` with `before`, `after`, `revision_before`, `revision_after` — all in one transaction.
-- On `conflict` the store re-reads once and recomputes; a second conflict returns the tool result `{ error: "That note just changed. Read it again before changing it." }` to the model (no content in the message).
+- On `conflict` the store re-reads once and recomputes (**Decided by Tony, 2026-10-13.**); a second conflict returns the tool result `{ error: "That note just changed. Read it again before changing it." }` to the model (no content in the message).
 - `create()` calls `agent_create_note`, which inserts the note (`revision = 1`) and its `create` action in one transaction.
 - W7 (`triage_status` bulk update) is unchanged; it does not bump revisions.
 - `executeRun()` error logging stays as today: run id and error type only.
@@ -138,8 +138,11 @@ Response status, by precedence over the items: any `conflict` → **409** `revis
 | Create, project with linked items | Children exist | 409 `project_has_linked_items` |
 | Create, note already gone | No row | Mark undone; 200 `{ undone, alreadyDeleted: true }` |
 | Legacy action (`revision_after is null`) | Recorded before migration | Use the value-comparison rows above only |
+| Undo window passed | `action.created_at` older than 90 days | 410 `undo_expired`; nothing written |
 
-Success sets `undone_at`, `undone_by` in the same transaction and returns `{ undone: id, revision }`. A restore is a normal tracked update, so it bumps the revision and any open browser sees it as a remote change.
+Success sets `undone_at`, `undone_by` in the same transaction and returns `{ undone: id, revision }`.
+
+**Retention and undo window.** **Decided by Tony, 2026-10-13.** `agent_actions.before` and `after` are kept for **90 days**. After that, `purge_agent_action_values()` (service role, added in migration 2) sets both to `null` and keeps the row (run id, note id, kind, reason, revisions, timestamps) as history. The purge runs once a day from the existing scheduler tick (`app/api/scheduler/tick/[slot]/route.ts`, one fixed slot). Undo is available for exactly the same 90 days, so an action whose values have been purged can never be undone. `GET /api/agent/runs` returns `undoable: false` for expired actions so the UI hides the button. A restore is a normal tracked update, so it bumps the revision and any open browser sees it as a remote change.
 
 ### 6. Browser client and draft retention (D-01 client half; UI in U-02)
 
@@ -158,8 +161,8 @@ Enforcement is controlled by one typed server config value, `notesRevisionEnforc
 | Phase | Gate | Behavior |
 | --- | --- | --- |
 | **A — schema** | Migrations 1–2 applied, D-01 server deployed, enforcement `off` | Trigger manages revision/`updated_at` for every writer, including W10. W6/W8 move to the RPCs immediately (no client dependency). `PUT/DELETE /api/notes` go through `save_notes`/`delete_note`; absent `expectedRevision` = last-writer-wins as today. Responses add `revision` and `results`; old clients ignore them. |
-| **B — new client** | D-01 client shipped, enforcement `warn` | New clients send `expectedRevision` and an `X-Orbit-Client` build header. Legacy writes still succeed; the route increments a counter (route + outcome only, no ids or content). Responses carry `X-Orbit-Min-Client`; outdated new clients show "Reload to keep saving". |
-| **C — enforce** | Legacy-write counter at zero for 7 consecutive days and at least 14 days after B (open question 1) | Enforcement `enforce`: absent `expectedRevision` → 428. An old tab's `api()` throws, `flush()` sets `storageError`, and its edits stay in memory and are retried every 30 s until the user reloads. Unsaved edits in that tab are lost on reload, which is why phase B must be long enough. |
+| **B — new client** | D-01 client shipped, enforcement `warn` | New clients send `expectedRevision` and an `X-Orbit-Client` build header. Legacy writes still succeed; the route increments the legacy-write counter (§7a). Responses carry `X-Orbit-Min-Client`; outdated new clients show "Reload to keep saving". |
+| **C — enforce** | At least 14 days after B **and** 7 consecutive days with zero legacy writes (**Decided by Tony, 2026-10-13.**) | Enforcement `enforce`: absent `expectedRevision` → 428. An old tab's `api()` throws, `flush()` sets `storageError`, and its edits stay in memory and are retried every 30 s until the user reloads. Unsaved edits in that tab are lost on reload, which is why phase B must be long enough. |
 | **C′ — lock down** | Phase C stable; W9 migrated | Migration `20261021000000_note_write_enforcement.sql`: `revoke insert, update, delete on public.notes from authenticated` (select stays). All writes go through the functions or server routes. Closes W10. |
 
 Per-writer plan:
@@ -178,11 +181,15 @@ Per-writer plan:
 | Scheduled reports | None today. A future "save report as note" uses `save_notes` create-only. | Create-only |
 | Assignments (ADR 003) | Saving an artifact as a document is a user create through `save_notes` | Create-only |
 
+### 7a. Legacy-write counter
+
+**Decided by Tony, 2026-10-13.** The counter is a **server-side metric with no content**: writer/route name and a count only (for example `{ metric: "notes.legacy_write", writer: "W1", route: "PUT /api/notes", count: 3 }`). No user ids, note ids, titles or bodies. It is emitted through the same typed server config/logging module that reads `notesRevisionEnforcement`, not through ad-hoc `console` calls in route code. The phase C gate reads this metric.
+
 ### 8. Logging and data hygiene
 
 - Conflict and undo errors carry ids, revisions and column names only. No titles, content, `origin` or reasons in error messages or logs.
 - The legacy-write counter and conflict metrics record counts per route and outcome only.
-- `agent_actions.before/after` already store copies of note content. This ADR does not widen that; retention for that history is an open question.
+- `agent_actions.before/after` already store copies of note content. This ADR does not widen that, and caps it at 90 days (§5).
 - The `current` copy in a 409 goes only to the owning session, matching what that session can already `GET` (minimum necessary for external callers, §3).
 
 ## Consequences
@@ -204,7 +211,4 @@ Per-writer plan:
 
 ## Open questions
 
-1. **Phase B → C gate.** Proposed: at least 14 days and 7 days of zero legacy writes. *Decider: Tony.*
-2. **Retention of `agent_actions.before/after`** (content copies). Proposed: keep for undo for 30 days, then null the values but keep the row. *Decider: Tony.*
-3. **Telemetry sink** for the legacy-write counter (Vercel logs vs. a table). *Owner: Lead.*
-4. **Does the agent retry once on conflict, or report immediately?** Proposed: one re-read. *Owner: Agents.*
+None remaining. Resolved by Tony, 2026-10-13: the phase B → C gate (§7), 90-day `agent_actions` retention with a matching undo window (§5), one agent re-read on conflict (§4), and the legacy-write counter as a content-free server metric (§7a).

@@ -51,9 +51,9 @@ create index notes_workspace_kind_idx on public.notes (workspace_id, kind);
 - `bucket` keeps its GTD meaning (where it sits in the workflow); `kind` says what it is. Any combination is valid (a `task` can sit in `someday`; a `document` in `reference`).
 - Conversion suggestions are computed in the app, not stored: `next → task`, `projects → project`, `waiting → followup`, `reference → document`; `inbox` and `someday` get no suggestion. Accepting a suggestion is an ordinary revisioned update (ADR 002). Moving a bucket never changes `kind`, and changing `kind` never changes `bucket`.
 - Capture writers (Slack, email, `POST /api/v1/notes`, MCP `orbit_capture_note`) do not send `kind`; the column default makes captures `note`.
-- The organizing agent (`lib/agent/agent.ts`) gains read-only visibility of `kind` in `AgentNoteSummary` in D-02. Whether `update_note` may change `kind` or `project_id` is an open question; until decided it may not.
+- The organizing agent may set `kind` and `project_id` (see §3a). **Decided by Tony, 2026-10-13.**
 
-### 3. Project links: one parent project per item, enforced in the database
+### 3. Project links: one parent project per item, nested projects allowed, enforced in the database
 
 ```sql
 -- Target for composite FKs that tie a link to the same owner and workspace.
@@ -70,26 +70,49 @@ alter table public.notes
 create index notes_project_idx on public.notes (project_id) where project_id is not null;
 ```
 
-The composite FK follows the pattern already used for `workspace_id` and `agent_runs`, and makes cross-user and cross-workspace links impossible at the database level, whatever the writer. `on delete set null (project_id)` (PostgreSQL 15+ column list) clears only the link, never `workspace_id`/`user_id`.
+The composite FK follows the pattern already used for `workspace_id` and `agent_runs`, and makes cross-user and cross-workspace links impossible at the database level, whatever the writer. `on delete set null (project_id)` (PostgreSQL 15+ column list; available, see Consequences) clears only the link, never `workspace_id`/`user_id`.
 
 A `before insert or update of project_id, kind` trigger, `notes_validate_project_link()` (`security invoker`, `search_path = ''`), enforces what an FK cannot:
 
 | Rule | Rejection code |
 | --- | --- |
-| Target row has `kind = 'project'` | `invalid_project_link` |
-| An item of kind `project` may not itself have a `project_id` (no nesting in v1) | `invalid_project_link` |
+| Target row has `kind = 'project'` (same user and workspace is guaranteed by the composite FK) | `invalid_project_link` |
+| No self-link (also the `notes_project_not_self` check) | `invalid_project_link` |
+| **No cycles:** the new parent must not be the item itself or any of its descendants | `project_cycle` |
+| **Max depth:** a chain of nested projects is at most **5 levels** (a root project plus 4 levels of sub-projects); non-project items can attach to a project at any level | `project_depth_exceeded` |
 | An item may not stop being `kind = 'project'` while other items link to it | `project_has_linked_items` |
 
 The trigger raises `check_violation` (SQLSTATE `23514`) with the code as the message; the API maps it (see Error contract). Messages never include titles or content.
+
+**Nested projects.** **Decided by Tony, 2026-10-13.** A project may have a parent project. Only `kind = 'project'` rows can be parents, so cycles and depth only concern projects.
+
+- **Cycle check.** When `project_id` changes (or is set on insert) for a row of kind `project`, the trigger walks *up* from the new parent with a recursive CTE (`with recursive ancestors as (...)`), filtered to the same `workspace_id` and `user_id` and capped at the max depth. If the walk reaches `new.id`, it raises `project_cycle`. Non-project items can't be parents, so their links need no cycle check.
+- **Depth check.** In the same statement, depth = (ancestors of the new parent + 1) + (height of the moving project's own sub-project subtree, from a recursive walk *down*). Over 5 raises `project_depth_exceeded`. 5 levels is enough for "area → outcome → workstream → sub-outcome → piece" and keeps every recursive query small and bounded. Changing the limit is a one-line trigger change plus a migration.
+- **Concurrency.** Two concurrent re-parentings could each pass the check and together form a cycle under read committed. When a project row's `project_id` changes, the trigger first takes `pg_advisory_xact_lock(hashtextextended(workspace_id::text, 0))`, which serializes project re-parenting per workspace. Ordinary item links don't take the lock.
+- **Project-detail queries.** "Direct contents" is `where project_id = :id` (uses `notes_project_idx`). Roll-ups ("include sub-projects", counts on Home/Projects) and breadcrumbs use two `security invoker` SQL functions added in migration 3, so RLS still applies: `project_descendants(p_project_id uuid)` returns `(id, depth)` and `project_ancestors(p_item_id uuid)` returns `(id, depth)`. Both are recursive CTEs scoped to the caller's user and workspace and bounded by the max depth.
+- **Completion** of a parent project does not complete its children or sub-projects.
 
 **Relationship changes**
 
 - Link / relink: set `project_id` with the expected revision of the *child* only. Linking does not change the project's revision.
 - Unlink: set `project_id = null`.
-- **Cross-workspace moves of linked items are rejected** in v1. Moving a child that still has `project_id` fails the composite FK; moving a project that still has children fails `on update restrict`. The API returns `422 linked_item_move` and the UI asks the user to unlink first. Same rule for items referenced by an active assignment (ADR 003).
-- **Deleting a project** that has linked items: `DELETE /api/notes/:id` returns `409 project_has_linked_items` with a count. The client confirms and repeats with `unlinkChildren=true`; the delete function then clears `project_id` on each child (bumping each child's revision, ADR 002) and deletes the project in one transaction. The `on delete set null (project_id)` FK action is the backstop for any other delete path.
-- **Archive:** there is no archive state. A completed project (`completed_at` set) is the archive equivalent; linked items keep their link. A dedicated archive flag is an open question.
+- Relinking a project to a different parent runs the cycle and depth checks. The whole subtree moves with it, because descendants keep their own `project_id`.
+- **Unlink** of a sub-project (`project_id = null`) makes it a root project that keeps its own subtree.
+- **Cross-workspace moves of linked items are rejected** in v1, at any depth. Moving a child that still has `project_id` fails the composite FK; moving a project that still has children or sub-projects fails `on update restrict`. The API returns `422 linked_item_move` and the UI asks the user to unlink first. Moving a whole subtree between workspaces is a later feature. Same rule for items referenced by an active assignment (ADR 003).
+- **Deleting a project** that has linked items or sub-projects: `DELETE /api/notes/:id` returns `409 project_has_linked_items` with the count of *direct* children. The client confirms and repeats with `unlinkChildren=true`. In one transaction, the delete function then moves each direct child up to the deleted project's parent (or to no project if it was a root), bumping each child's revision (ADR 002), and deletes the project. Deeper descendants keep their own parents, so the rest of the tree stays intact; moving up can only reduce depth and can't create a cycle. The `on delete set null (project_id)` FK action is the backstop for any other delete path (it detaches direct children rather than moving them up).
+- **Archive:** there is no archive state. A completed project (`completed_at` set) is the archive equivalent; linked items keep their link. A dedicated archive flag is an open question that does not block D-02.
 - Agent undo of an agent-created project that has since gained children is a conflict, not a delete (ADR 002).
+
+### 3a. Agent writes to `kind` and `project_id`
+
+**Decided by Tony, 2026-10-13.** The organizing agent may set `kind` and `project_id`. This is a **D-02 dependency for the Agents owner** (`lib/agent/`) and must land with the D-02 schema:
+
+- **Tools** (`AGENT_TOOLS` in `lib/agent/agent.ts`): `update_note` and `create_note` gain optional `kind` (enum) and `project_id` (UUID, or `null` to unlink). `list_notes` gains a `kind` filter and returns `kind` and `projectId`. `executeTool()` validates the enum and UUID shape and counts these changes against the existing write budget.
+- **Same write path as every agent edit:** the changes go through `agent_apply_note_change` / `agent_create_note` (ADR 002), with revision preconditions, atomic `agent_actions` audit, and safe undo. `kind` and `project_id` join the restorable column whitelist.
+- **No cross-workspace links:** the store resolves `project_id` only within its run's workspace (`supabaseAgentStore()` filters on `user_id` and `workspace_id`). The tool returns `Project not found` otherwise, and the composite FK plus trigger reject it anyway. Cycle and depth errors come back to the model as short tool errors with no content.
+- **No silent bulk reclassification:** the server, not the prompt, lets the agent change `kind` directly only on (a) captures it is triaging (`triage_status = 'pending'`) and (b) notes it creates in the same run. For any other existing note, `update_note` with `kind` returns `{ error: "Suggest this kind change in your summary instead" }`. The agent lists those as suggestions in its run summary, and the user applies them. `project_id` may be set on any note in the workspace, within the write budget.
+- **Undo:** restoring an old `project_id` can hit a cycle or depth limit if the tree changed since. The undo function then returns `409 undo_conflict` with `fields: ["project_id"]` and `reason: "project_cycle" | "project_depth_exceeded"`, and writes nothing.
+- The system prompt (`agentSystemPrompt()`) explains kinds and the suggestion rule. The prompt is guidance only; enforcement is in the store.
 
 A many-to-many `item_links` table (backlinks, "related to", document ↔ project) is deferred to K-01 and will be additive to this column, not a replacement.
 
@@ -105,7 +128,7 @@ create index notes_next_check_idx on public.notes (user_id, next_check_on)
   where next_check_on is not null and completed_at is null;
 ```
 
-- Fields are allowed on any kind (a `task` in `waiting` can carry them); the editor shows them for `followup` items and the `waiting` bucket. Changing `kind` does not clear them.
+- Fields are allowed on any kind (decided by Tony, 2026-10-13; a `task` in `waiting` can carry them); the editor shows them for `followup` items and the `waiting` bucket. Changing `kind` does not clear them.
 - `next_check_on` and `due_date` are calendar dates (validated by `isDueDate()` in `lib/notes.ts`); never converted to instants.
 - `waiting_on` is descriptive text, not an account reference. It grants nothing and does not create sharing (plan: single-user workspaces).
 
@@ -148,7 +171,7 @@ create index note_reminders_due_idx on public.note_reminders (fire_at) where sta
 | `lib/notes-db.ts` `toRow()` / save function input | Include each new field only when `!== undefined` (the `dueDate` idiom), so an older client's omission means "unchanged". |
 | `lib/notes-db.ts` `isSavableNote()` | Validate kind enum, `projectId` UUID or null, length limits, `isDueDate(nextCheckOn)`. Relationship validity is left to the database (single source of truth). |
 | `app/api/v1/notes/route.ts` GET + `docs/api/openapi.json` + `docs/api/agents.md` | Add `kind`, `project_id`, `revision` (and D-03 fields) to the projection. Additive, so stays `/api/v1`. |
-| `lib/agent/server.ts` agent `NoteRow` select | Read `kind`, `project_id`; agent tools stay as-is unless the open question is resolved. |
+| `lib/agent/server.ts`, `lib/agent/agent.ts` | Read `kind`, `project_id`; tool and store changes per §3a (Agents owner, D-02 dependency). |
 | `components/workspace.tsx` `exportNotes()` | Export `version: 2` including the new fields. There is no import-from-export path today; if one is added, it must accept versions 1 and 2. |
 
 ### 6. Migration sequence
@@ -159,7 +182,7 @@ Naming follows the existing `supabase/migrations/YYYYMMDDHHMMSS_snake_case.sql` 
 | --- | --- | --- | --- |
 | 1 | `20261014000000_note_revisions.sql` | D-01 | ADR 002 |
 | 2 | `20261014000100_note_write_functions.sql` | D-01 | ADR 002 |
-| 3 | `20261015000000_note_kinds_and_project_links.sql` | D-02 | §2, §3: `kind`, `notes_id_workspace_user_key`, `project_id` + FK + trigger; `create or replace` the ADR 002 save/delete functions to accept `kind`, `project_id`, `unlinkChildren` |
+| 3 | `20261015000000_note_kinds_and_project_links.sql` | D-02 | §2, §3: `kind`, `notes_id_workspace_user_key`, `project_id` + FK + trigger; `create or replace` the ADR 002 save/delete functions to accept `kind`, `project_id`, `unlinkChildren`; extend the agent functions' restorable whitelist; `project_descendants()` / `project_ancestors()` |
 | 4 | `20261016000000_note_followups_and_reminders.sql` | D-03 | §4: follow-up columns, `note_reminders` + RLS (owner select/insert/update/delete mirroring `notes`), revision trigger for reminders; `create or replace` save function for follow-up fields |
 | 5 | `20261017000000_assignments.sql` | A-01 | ADR 003 |
 | 6 | `20261021000000_note_write_enforcement.sql` | D-01 phase C | ADR 002 rollout; applied only after the rollout gate |
@@ -173,7 +196,9 @@ Existing note routes return `{ error: string }`. Responses gain an optional mach
 | HTTP | `code` | When |
 | --- | --- | --- |
 | 400 | `invalid_payload` | Shape/limits fail `isSavableNote()` (existing behavior; whole batch rejected) |
-| 422 | `invalid_project_link` | Target missing, not a project, other workspace/user, self-link, or nested project |
+| 422 | `invalid_project_link` | Target missing, not a project, other workspace/user, or self-link |
+| 422 | `project_cycle` | New parent is the item itself or one of its descendants |
+| 422 | `project_depth_exceeded` | The project chain would exceed 5 levels |
 | 422 | `linked_item_move` | Workspace change on a linked child or a project with children |
 | 409 | `project_has_linked_items` | Delete without `unlinkChildren=true`, or kind change away from `project` |
 
@@ -189,10 +214,10 @@ In batch `PUT /api/notes`, relationship failures are per-item results (ADR 002 r
 
 - Legacy rows, captures and old clients keep working unchanged at every step; new semantics are opt-in per item.
 - Project membership is guaranteed by the database for every writer, including the service-role admin client used by capture and the agent.
-- One project per item is a real limitation; many-to-many relations wait for K-01.
+- One parent project per item is a real limitation; many-to-many relations wait for K-01. Nested-project roll-ups cost bounded recursive queries (max depth 5).
 - Cross-workspace moves of linked items now need an explicit unlink, which is a UX change that U-02 must handle.
-- D-02 must update every serialization site listed in §5 together, and add tests for: legacy note without new fields round-trips unchanged; missing `kind` on update does not reset it; cross-workspace link, self-link, link to a non-project and nested project are all rejected; project delete with children is blocked without `unlinkChildren`.
-- `ON DELETE SET NULL (column)` needs PostgreSQL 15 or newer on the Supabase project (verify before D-02).
+- D-02 must update every serialization site listed in §5 together, and add tests for: legacy note without new fields round-trips unchanged; missing `kind` on update does not reset it; cross-workspace link, self-link and link to a non-project are rejected; nested projects up to 5 levels are accepted and a 6th level is rejected (`project_depth_exceeded`), including when moving a project that has its own subtree; **cycles are rejected** for a two-node cycle (A→B→A) and a longer one (A→B→C→A), plus a concurrency test where two transactions re-parent projects toward each other and only one succeeds; project delete with children is blocked without `unlinkChildren`, and with it, direct children move up to the grandparent and deeper descendants are unchanged; agent `kind` changes on non-pending existing notes are refused; agent cross-workspace `project_id` is refused; undo of an agent `project_id` change that would now form a cycle returns `undo_conflict`.
+- `ON DELETE SET NULL (column)` needs PostgreSQL 15 or newer. **Verified by lead, 2026-10-13: server_version 17.11.**
 
 ## Alternatives considered
 
@@ -205,8 +230,7 @@ In batch `PUT /api/notes`, relationship failures are per-item results (ADR 002 r
 
 ## Open questions
 
-1. **Agent writes to `kind` / `project_id`.** May the organizing agent set them (and so suggest projects/tasks during triage)? Default proposed: no in D-02, revisit after U-02. *Decider: Tony. Blocks: D-02 agent tool scope.*
-2. **Nested projects / sub-projects.** Proposed: not in v1. *Decider: Tony/product.*
-3. **Archive state for projects** beyond `completed_at`. *Decider: product. Blocks: project deletion UX in U-03.*
-4. **Follow-up fields only on `kind = 'followup'`?** Proposed: allowed on any kind. *Decider: product.*
-5. **Supabase Postgres version** supports `ON DELETE SET NULL (column)` — confirm, otherwise use a trigger. *Owner: Lead before D-02.*
+1. **Archive state for projects** beyond `completed_at`. **Does not block D-02.** *Decider: product. Blocks: project deletion UX in U-03.*
+2. **Max nesting depth of 5** is proposed here; confirm or change. *Decider: Tony. Does not block D-02 (a single trigger constant).*
+
+Resolved 2026-10-13: agent writes to `kind`/`project_id` (§3a), nested projects (§3) and follow-up fields on any kind (§4), each decided by Tony; Postgres version verified by lead (server_version 17.11).
