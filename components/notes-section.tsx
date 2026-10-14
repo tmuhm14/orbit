@@ -52,8 +52,6 @@ function visibleNotes(
 export function NotesSection() {
   const {
     workspaceNotes,
-    workspaceId,
-    setNotes,
     loaded,
     loadError,
     view,
@@ -63,6 +61,7 @@ export function NotesSection() {
     setTagFilter,
     openNote,
     newNote,
+    items: { moveNoteToBucket },
   } = useWorkspaceShell();
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [sort, setSort] = useState<Sort>("newest");
@@ -71,18 +70,6 @@ export function NotesSection() {
   const [dropBucket, setDropBucket] = useState<BucketId | null>(null);
   const allTags = [...new Set(workspaceNotes.flatMap((n) => n.tags))].sort();
   const visible = visibleNotes(workspaceNotes, { view, search, tagFilter, sort });
-  function moveNoteToBucket(noteId: string, destination: BucketId) {
-    setNotes((current) =>
-      current.map((note) =>
-        note.id === noteId &&
-        note.workspaceId === workspaceId &&
-        !note.completedAt &&
-        note.bucket !== destination
-          ? { ...note, bucket: destination, updatedAt: new Date().toISOString() }
-          : note,
-      ),
-    );
-  }
   return (
     <section className="notes-section">
       <div className="section-heading">

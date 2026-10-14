@@ -13,6 +13,7 @@ import {
 } from "@/lib/notes";
 import { ScheduledAudit } from "./scheduled-audit";
 import { SettingsContent } from "./settings-content";
+import { useItemActions } from "./use-item-actions";
 import { useNotes } from "./use-notes";
 import { useQuickCapture } from "./use-quick-capture";
 import { useSessionWatch } from "./use-session-watch";
@@ -80,6 +81,7 @@ export function Workspace({
   const [toast, setToast] = useToast();
   const dialogs = useWorkspaceDialogs(initialSearchOpen);
   const capture = useQuickCapture({ setNotes, workspaceId, onToast: setToast });
+  const items = useItemActions({ notes, setNotes, workspaceId, showToast: setToast });
   const searchRef = useRef<HTMLInputElement>(null);
   const { setSearchOpen } = dialogs;
   useEffect(() => {
@@ -232,6 +234,7 @@ export function Workspace({
     exportNotes,
     openGuide: () => dialogs.setGuideOpen(true),
     showToast: setToast,
+    items,
   };
   if (sessionExpired)
     return (
