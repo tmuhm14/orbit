@@ -189,13 +189,14 @@ Success is the completed user workflow, not the number of agents or components p
   - No duplicate-capture idempotency tests across Slack/email retries beyond stable source refs.
   - No UI tests for capture shortcuts, dialogs or workspace switching; O-02 relies on typecheck plus manual/browser verification.
 
-### O-02 — shell extraction (implemented, awaiting smoke test)
+### O-02 — shell extraction (implemented and smoke-tested)
 
 - Branch `refactor/extract-workspace-shell` @ d2a685b; `components/workspace.tsx` 1054 → 310 lines, 10 new components; `globals.css` untouched.
 - typecheck pass; tests 41/41; `npm run build` succeeds without secrets.
-- Not yet verified in a signed-in browser session (capture, dialogs, drag-and-drop, workspace switching, Settings/Scheduled ↔ Home). Required before merge.
+- Smoke-tested October 13, 2026 against the Supabase project with a throwaway account: ⌘J/⌘K/Escape, shortcuts ignored while editor open, quick capture, editor open/close, new note, guide/agent/scheduled dialogs, workspace create and switch (isolated counts), bucket navigation, drag-and-drop to another bucket (persisted), Settings/Scheduled → Home, history back/forward, mobile drawer open/Escape/backdrop. No console errors from the app.
+- Pre-existing (not O-02, `app/` and `lib/` unchanged): the first render right after sign-in can show "Your notes could not be loaded"; a reload clears it. Track separately.
 
-### O-01 — foundation ADRs (drafted, awaiting Tony's approval)
+### O-01 — foundation ADRs (accepted by Tony, October 13, 2026)
 
 - Branch `docs/foundation-adrs` @ af65546: `docs/adr/template.md`, 001 item evolution, 002 revisions/conflicts, 003 assignments, 004 capability grants, 005 runtime boundary.
 - Proposed migrations: 20261014000000_note_revisions, 20261014000100_note_write_functions (D-01); 20261015000000_note_kinds_and_project_links (D-02); 20261016000000_note_followups_and_reminders (D-03); 20261017000000_assignments (A-01); 20261021000000_note_write_enforcement (D-01 phase C′, after rollout gate).
