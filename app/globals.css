@@ -4108,3 +4108,114 @@ main.home-focus {
   .breadcrumb-current { display: none; }
 }
 /* ===== End top bar on phones ===== */
+/* ===== Home quick move: item actions menu and drag to bucket ===== */
+.home-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 6px;
+}
+.home-row .home-item { flex: 1; width: auto; min-width: 0; }
+.home-row .home-item:focus-visible { outline-offset: 0; }
+.home-row[draggable="true"],
+.due-group li[draggable="true"] { cursor: grab; }
+.home-row[draggable="true"]:active,
+.due-group li[draggable="true"]:active { cursor: grabbing; }
+.home-row[data-dragging],
+.due-group li[data-dragging] {
+  opacity: 0.45;
+  outline: 1px dashed #ffffff26;
+  outline-offset: -1px;
+}
+.item-actions-button {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: #968da0;
+  cursor: pointer;
+}
+.item-actions-button:hover,
+.item-actions-button[aria-expanded="true"] {
+  color: var(--text);
+  background: #ffffff0a;
+}
+.item-actions-button:focus-visible { outline-offset: 0; }
+/* On a mouse, keep the button quiet until the row is in use. */
+@media (hover: hover) and (pointer: fine) {
+  .home-row .item-actions-button,
+  .due-group li .item-actions-button { opacity: 0.55; }
+  .home-row:hover .item-actions-button,
+  .home-row:focus-within .item-actions-button,
+  .due-group li:hover .item-actions-button,
+  .due-group li:focus-within .item-actions-button,
+  .item-actions-button[aria-expanded="true"] { opacity: 1; }
+}
+.due-group li .due-actions { align-self: center; width: 28px; height: 28px; }
+.item-menu {
+  position: fixed;
+  z-index: 50;
+  top: 0;
+  left: 0;
+  width: 220px;
+  padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: #1b1c22;
+  border: 1px solid #ffffff12;
+  border-radius: 10px;
+  box-shadow: 0 18px 40px #0008;
+  font-size: 12px;
+  color: var(--text);
+  animation: fade var(--motion-fast) var(--ease-out);
+}
+.item-menu-label {
+  padding: 7px 8px 5px;
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.item-menu-item {
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 7px;
+  text-align: left;
+  color: var(--text);
+}
+.item-menu-item:hover,
+.item-menu-item:focus { background: #ffffff0d; outline: 0; }
+.item-menu-item:focus-visible { outline: 2px solid var(--purple); outline-offset: -2px; }
+.item-menu-icon { flex: none; color: #a69db2; }
+.item-menu-icon.purple, .item-menu-icon.green, .item-menu-icon.blue,
+.item-menu-icon.amber, .item-menu-icon.pink, .item-menu-icon.slate { color: var(--accent); }
+.item-menu-separator { height: 1px; margin: 5px 4px; background: #ffffff0f; }
+@media (pointer: coarse) {
+  .item-actions-button,
+  .due-group li .due-actions { width: 44px; height: 44px; }
+  .item-menu-item { min-height: 44px; }
+}
+/* Drop targets while a Home row is being dragged. */
+.home-bucket-link[data-drop-available],
+.nav-item[data-drop-available] {
+  outline: 1px dashed #ffffff1f;
+  outline-offset: -1px;
+}
+.home-bucket-link[data-drop-target] {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  background: color-mix(in srgb, var(--accent) 14%, #17171c);
+}
+.nav-item[data-drop-target] {
+  outline: 2px solid var(--purple);
+  outline-offset: -2px;
+  background: #b299ec1f;
+  color: var(--text);
+}
+/* ===== End Home quick move ===== */

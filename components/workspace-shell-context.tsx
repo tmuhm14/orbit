@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import type { BucketId, Note } from "@/lib/notes";
 import type { QuickCaptureState } from "./use-quick-capture";
+import type { ItemActions } from "./use-item-actions";
 
 export const bucketIcons = {
   inbox: Inbox,
@@ -53,6 +54,12 @@ export type WorkspaceShellValue = {
   exportNotes: () => void;
   openGuide: () => void;
   showToast: (message: string) => void;
+  /**
+   * Shared move/complete actions and Home drag state (see `useItemActions`).
+   * Both actions save through `setNotes`, return whether anything changed,
+   * and show a toast when it did.
+   */
+  items: ItemActions;
 };
 
 const WorkspaceShellContext = createContext<WorkspaceShellValue | null>(null);

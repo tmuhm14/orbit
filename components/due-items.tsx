@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type HTMLAttributes, type ReactNode } from "react";
 import { CalendarDays, Check } from "lucide-react";
 import { BUCKETS, type Note } from "@/lib/notes";
 import { groupDueItems, localDateKey } from "@/lib/due-items";
@@ -26,13 +26,17 @@ export function dueDateLabel(date: string, today: string | null) {
   return new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", ...(date.slice(0, 4) !== today?.slice(0, 4) ? { year: "numeric" as const } : {}) });
 }
 
-export function DueItems({ notes, workspaceId, loading = false, unavailable, onOpen, onComplete }: {
+export function DueItems({ notes, workspaceId, loading = false, unavailable, onOpen, onComplete, rowProps, renderActions }: {
   notes: Note[];
   workspaceId: string;
   loading?: boolean;
   unavailable: boolean;
   onOpen: (id: string) => void;
   onComplete: (id: string) => void;
+  /** Extra props per row, such as drag handlers. */
+  rowProps?: (note: Note) => HTMLAttributes<HTMLLIElement>;
+  /** Trailing per-row controls, such as a quick-actions menu. */
+  renderActions?: (note: Note) => ReactNode;
 }) {
   const today = useLocalToday();
   const groups = today && !loading ? groupDueItems(notes, workspaceId, today) : null;
@@ -51,12 +55,13 @@ export function DueItems({ notes, workspaceId, loading = false, unavailable, onO
         <section className={`due-group is-${key}`} key={key} aria-labelledby={`due-${key}`}>
           <h3 id={`due-${key}`}>{key === "overdue" ? "Overdue" : key === "today" ? "Today" : "Upcoming"}<span>{groups[key].length}</span></h3>
           <ul>{groups[key].map(note => (
-            <li key={note.id}>
+            <li key={note.id} {...rowProps?.(note)}>
               <button className="due-complete" aria-label={`Complete ${note.title || "Untitled thought"}`} onClick={() => onComplete(note.id)}><Check size={12} /></button>
               <button className="due-note" onClick={() => onOpen(note.id)}>
                 <strong>{note.title || "Untitled thought"}</strong>
                 <span>{BUCKETS.find(bucket => bucket.id === note.bucket)?.name}<time dateTime={note.dueDate!}>{key === "today" ? "Today" : dueDateLabel(note.dueDate!, today)}</time></span>
               </button>
+              {renderActions?.(note)}
             </li>
           ))}</ul>
         </section>

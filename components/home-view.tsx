@@ -10,6 +10,8 @@ import {
   type HomeList,
 } from "@/lib/home-items";
 import { DueItems, dueDateLabel, useLocalToday } from "./due-items";
+import { ItemActionsMenu } from "./item-actions-menu";
+import { useBucketDropTargets, useDraggableItem } from "./item-drag";
 import { bucketIcons, useWorkspaceShell } from "./workspace-shell-context";
 
 const untitled = (note: Note) => note.title || "Untitled thought";
@@ -93,10 +95,11 @@ const LISTS: Record<"inbox" | "next" | "waiting", ListConfig> = {
 
 /** A short Home list for one bucket, with a link to the full bucket view. */
 export function HomeList({ kind }: { kind: keyof typeof LISTS }) {
-  const { notes, workspaceId, loaded, loadError, navigate, openNote, capture } =
+  const { notes, workspaceId, loaded, loadError, navigate, openNote, capture, items } =
     useWorkspaceShell();
-  // Only a real quick capture sets this; loads and background refreshes don't.
-  const justCaptured = capture.feedback?.id;
+  const dragProps = useDraggableItem();
+  // Only a real quick capture or move sets these; loads and refreshes don't.
+  const justArrived = (id: string) => id === capture.feedback?.id || id === items.arrived;
   // Dates are locale/timezone dependent, so they render only after mount.
   const today = useLocalToday();
   const config = LISTS[kind];
@@ -150,7 +153,11 @@ export function HomeList({ kind }: { kind: keyof typeof LISTS }) {
               const SourceIcon = note.source === "slack" ? MessageSquare : note.source === "email" ? Mail : null;
               const overdue = kind === "next" && today && isDueDate(note.dueDate) && note.dueDate <= today;
               return (
-                <li key={note.id} className={note.id === justCaptured ? "home-item-new" : undefined}>
+                <li
+                  key={note.id}
+                  className={`home-row ${justArrived(note.id) ? "home-item-new" : ""}`}
+                  {...dragProps(note)}
+                >
                   <button className="home-item" onClick={() => openNote(note.id)}>
                     <strong>{untitled(note)}</strong>
                     <span className={`home-item-meta ${overdue ? "is-due" : ""}`}>
@@ -158,6 +165,7 @@ export function HomeList({ kind }: { kind: keyof typeof LISTS }) {
                       {meta ?? " "}
                     </span>
                   </button>
+                  <ItemActionsMenu note={note} />
                 </li>
               );
             })}
@@ -176,6 +184,7 @@ export function HomeList({ kind }: { kind: keyof typeof LISTS }) {
 /** Compact, demoted bucket navigation with live counts. */
 export function HomeBucketLinks() {
   const { loaded, loadError, bucketCount, navigate, openGuide } = useWorkspaceShell();
+  const dropProps = useBucketDropTargets();
   return (
     <nav className="home-buckets" aria-labelledby="home-buckets-heading">
       <div className="home-buckets-heading">
@@ -194,6 +203,7 @@ export function HomeBucketLinks() {
                 className={`home-bucket-link ${b.color}`}
                 onClick={() => navigate(b.id)}
                 aria-label={count === null ? b.name : `${b.name}, ${count} items`}
+                {...dropProps(b.id)}
               >
                 <Icon size={15} aria-hidden="true" />
                 <span>{b.name}</span>
@@ -209,8 +219,8 @@ export function HomeBucketLinks() {
 
 /** Home side panel listing due items for the current workspace. */
 export function HomeDueItems() {
-  const { notes, workspaceId, loaded, loadError, setNotes, openNote, showToast } =
-    useWorkspaceShell();
+  const { notes, workspaceId, loaded, loadError, openNote, items } = useWorkspaceShell();
+  const dragProps = useDraggableItem();
   return (
     <DueItems
       notes={notes}
@@ -218,11 +228,9 @@ export function HomeDueItems() {
       loading={!loaded}
       unavailable={loadError}
       onOpen={openNote}
-      onComplete={(id) => {
-        const now = new Date().toISOString();
-        setNotes(current => current.map(note => note.id === id && note.workspaceId === workspaceId ? { ...note, completedAt: now, updatedAt: now } : note));
-        showToast("Note completed");
-      }}
+      onComplete={items.completeNote}
+      rowProps={dragProps}
+      renderActions={(note) => <ItemActionsMenu note={note} className="due-actions" />}
     />
   );
 }

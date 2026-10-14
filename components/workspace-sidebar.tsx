@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { BUCKETS } from "@/lib/notes";
 import { signOut } from "@/app/auth/actions";
+import { useBucketDropTargets } from "./item-drag";
 import { WorkspaceSwitcher } from "./workspace-switcher";
 import { bucketIcons, useWorkspaceShell } from "./workspace-shell-context";
 
@@ -50,6 +51,7 @@ export function WorkspaceSidebar({
     exportNotes,
     openGuide,
   } = useWorkspaceShell();
+  const dropProps = useBucketDropTargets();
   const onRoute = !settingsPage && !scheduledPage;
   return (
     <>
@@ -99,6 +101,7 @@ export function WorkspaceSidebar({
                 key={b.id}
                 className={`nav-item ${onRoute && view === b.id && !search ? "active" : ""}`}
                 onClick={() => navigate(b.id)}
+                {...dropProps(b.id)}
               >
                 <Icon className={b.color} size={18} />
                 <span>{b.name}</span>
