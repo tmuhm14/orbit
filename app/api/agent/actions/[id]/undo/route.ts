@@ -3,7 +3,12 @@ import { isUuid } from "@/lib/notes";
 
 type UndoResult =
   | { status: "undone"; undone: string; revision: number | null; alreadyDeleted?: boolean }
-  | { status: "undo_conflict"; fields: string[] }
+  | {
+      status: "undo_conflict";
+      fields: string[];
+      /** Set when restoring kind or project_id would break a project rule. */
+      reason?: string;
+    }
   | {
       status:
         | "not_found"
@@ -57,7 +62,9 @@ export async function POST(
     {
       error: message,
       code: result.status,
-      ...(result.status === "undo_conflict" ? { fields: result.fields } : {}),
+      ...(result.status === "undo_conflict"
+        ? { fields: result.fields, ...(result.reason ? { reason: result.reason } : {}) }
+        : {}),
     },
     status,
   );

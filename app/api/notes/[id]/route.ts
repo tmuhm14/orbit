@@ -1,6 +1,10 @@
 import { routeUser, json } from "@/lib/supabase/route-auth";
 import { isUuid } from "@/lib/notes";
-import { deleteResponse, parseExpectedRevision } from "@/lib/notes-db";
+import {
+  deleteResponse,
+  parseExpectedRevision,
+  parseUnlinkChildren,
+} from "@/lib/notes-db";
 import {
   notesMinClient,
   notesRevisionEnforcement,
@@ -10,6 +14,9 @@ import {
 /**
  * Deletes one of the user's notes if it is still at ?expectedRevision=n
  * (ADR 002 §3). Without a revision it is a legacy delete, refused in enforce.
+ * A project with linked items answers 409 project_has_linked_items with the
+ * count of direct children; ?unlinkChildren=true moves them up to the
+ * project's parent and deletes it (ADR 001 §3).
  */
 export async function DELETE(
   request: Request,
@@ -18,10 +25,10 @@ export async function DELETE(
   const auth = await routeUser(request, { mutating: true });
   if ("error" in auth) return auth.error;
   const { id } = await params;
-  const expected = parseExpectedRevision(
-    new URL(request.url).searchParams.get("expectedRevision"),
-  );
-  if (!isUuid(id) || expected === "invalid")
+  const query = new URL(request.url).searchParams;
+  const expected = parseExpectedRevision(query.get("expectedRevision"));
+  const unlinkChildren = parseUnlinkChildren(query.get("unlinkChildren"));
+  if (!isUuid(id) || expected === "invalid" || unlinkChildren === "invalid")
     return json({ error: "Invalid request", code: "invalid_payload" }, 400);
   const enforcement = notesRevisionEnforcement();
   const legacy = expected === undefined;
@@ -35,6 +42,7 @@ export async function DELETE(
     p_id: id,
     p_expected_revision: expected ?? null,
     p_require_revision: enforcement === "enforce",
+    p_unlink_children: unlinkChildren,
   });
   const result = error
     ? null

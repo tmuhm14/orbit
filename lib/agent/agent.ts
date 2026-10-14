@@ -1,4 +1,11 @@
-import { BUCKETS, type BucketId } from "../notes.ts";
+import {
+  BUCKETS,
+  ITEM_KINDS,
+  MAX_PROJECT_DEPTH,
+  type BucketId,
+  type ItemKind,
+  type LinkErrorCode,
+} from "../notes.ts";
 import type {
   AgentMessage,
   ModelProvider,
@@ -20,6 +27,8 @@ export type AgentNoteSummary = {
   createdAt: string;
   completed: boolean;
   pendingTriage: boolean;
+  kind: ItemKind;
+  projectId: string | null;
 };
 export type AgentNoteDetail = Omit<AgentNoteSummary, "snippet"> & {
   text: string;
@@ -27,6 +36,7 @@ export type AgentNoteDetail = Omit<AgentNoteSummary, "snippet"> & {
 };
 export type NoteFilter = {
   bucket?: BucketId;
+  kind?: ItemKind;
   query?: string;
   tag?: string;
   includeCompleted?: boolean;
@@ -40,22 +50,67 @@ export type NoteChanges = {
   completed?: boolean;
   /** Added as new paragraphs at the end of the note. */
   appendText?: string;
+  /** Only on captures being triaged and notes created in this run. */
+  kind?: ItemKind;
+  /** A project in this workspace, or null to unlink. */
+  projectId?: string | null;
 };
 export type NewNote = {
   title: string;
   body: string;
   bucket: BucketId;
   tags: string[];
+  kind?: ItemKind;
+  projectId?: string | null;
 };
+/** Why a store write was refused; executeTool turns it into a tool error. */
+export type StoreRefusal =
+  | "conflict"
+  | "kind_not_allowed"
+  | "project_not_found"
+  | LinkErrorCode;
 export type AgentStore = {
   list(filter: NoteFilter): Promise<AgentNoteSummary[]>;
   get(id: string): Promise<AgentNoteDetail | null>;
-  /** Returns false if the note is not in this workspace. */
-  update(id: string, changes: NoteChanges, reason: string): Promise<boolean>;
-  create(note: NewNote, reason: string): Promise<string>;
+  /** true when applied; false if the note is not in this workspace. */
+  update(
+    id: string,
+    changes: NoteChanges,
+    reason: string,
+  ): Promise<boolean | { refused: StoreRefusal }>;
+  /** The new note's id. */
+  create(note: NewNote, reason: string): Promise<string | { refused: StoreRefusal }>;
 };
 
+/** Short tool errors, with no note content (ADR 001 §3a, ADR 002 §4). */
+const REFUSALS: Record<StoreRefusal, string> = {
+  conflict: "That note just changed. Read it again before changing it.",
+  kind_not_allowed: "Suggest this kind change in your summary instead",
+  project_not_found: "Project not found",
+  invalid_project_link: "Project not found",
+  project_cycle: "That would put a project inside itself",
+  project_depth_exceeded: `Projects can be nested at most ${MAX_PROJECT_DEPTH} levels deep`,
+  linked_item_move: "Linked notes can't move to another workspace",
+  project_has_linked_items: "That project still has linked notes",
+};
+
+/** Agent changes can be undone for 90 days (ADR 002 §5). */
+export const UNDO_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+/** Whether the UI should offer undo for a recorded agent action. */
+export function isUndoable(
+  action: { created_at: string; undone_at: string | null; after: unknown },
+  now = Date.now(),
+) {
+  return (
+    !action.undone_at &&
+    action.after != null &&
+    now - Date.parse(action.created_at) <= UNDO_WINDOW_MS
+  );
+}
+
 const BUCKET_IDS = BUCKETS.map((b) => b.id);
+const KIND_IDS = [...ITEM_KINDS];
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_LIST = 50;
 const MAX_TEXT = 8_000;
 const MAX_APPEND = 4_000;
@@ -64,11 +119,12 @@ export const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: "list_notes",
     description:
-      "List notes in the workspace, newest first. Returns ids, titles, buckets, tags, and a short snippet.",
+      "List notes in the workspace, newest first. Returns ids, titles, buckets, kinds, project ids, tags, and a short snippet.",
     parameters: {
       type: "object",
       properties: {
         bucket: { type: "string", enum: BUCKET_IDS },
+        kind: { type: "string", enum: KIND_IDS },
         query: {
           type: "string",
           description: "Words to match in the title or body.",
@@ -95,13 +151,24 @@ export const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: "update_note",
     description:
-      "Change a note's title, bucket, tags (replaces the list), or completion, or append text to it. Every change is logged and can be undone by the user.",
+      "Change a note's title, bucket, kind, project, tags (replaces the list), or completion, or append text to it. Every change is logged and can be undone by the user.",
     parameters: {
       type: "object",
       properties: {
         id: { type: "string" },
         title: { type: "string", maxLength: 200 },
         bucket: { type: "string", enum: BUCKET_IDS },
+        kind: {
+          type: "string",
+          enum: KIND_IDS,
+          description:
+            "Only for captures you are triaging or notes you created in this run.",
+        },
+        project_id: {
+          type: "string",
+          description:
+            "Id of a project note in this workspace to file it under, or an empty string to unlink.",
+        },
         tags: { type: "array", items: { type: "string" }, maxItems: 20 },
         completed: { type: "boolean" },
         append_text: {
@@ -127,6 +194,11 @@ export const AGENT_TOOLS: ToolDefinition[] = [
         title: { type: "string", maxLength: 200 },
         body: { type: "string" },
         bucket: { type: "string", enum: BUCKET_IDS },
+        kind: { type: "string", enum: KIND_IDS },
+        project_id: {
+          type: "string",
+          description: "Id of a project note in this workspace to file it under.",
+        },
         tags: { type: "array", items: { type: "string" }, maxItems: 20 },
         reason: { type: "string" },
       },
@@ -140,6 +212,10 @@ export function agentSystemPrompt(workspaceName: string) {
 
 Buckets:
 ${BUCKETS.map((b) => `- ${b.id}: ${b.name}. ${b.hint}`).join("\n")}
+
+Kinds say what an item is, separately from its bucket: note, task (an action), project (an outcome with several steps), document (reference material), followup (something you are waiting on). A task can sit in any bucket; moving a bucket never changes the kind.
+- Set the kind only on captures you are triaging and on notes you create. For any other note, don't change its kind; list the change you would suggest in your summary so the user can decide.
+- File an item under a project with project_id (the id of a project note in this workspace). Projects can contain sub-projects, at most ${MAX_PROJECT_DEPTH} levels deep, and a project can't go inside itself.
 
 How to work:
 - Triage means clarifying each item: move it out of the inbox into the bucket that fits, give it a short, specific title (an action starting with a verb for next actions), and add a few lowercase tags that match the workspace's existing tags where possible.
@@ -183,6 +259,27 @@ const bucket = (value: unknown, required = false) => {
     throw new ToolInputError(`bucket must be one of ${BUCKET_IDS.join(", ")}`);
   return value as BucketId;
 };
+const kind = (value: unknown) => {
+  if (value === undefined) return undefined;
+  if (!KIND_IDS.includes(value as ItemKind))
+    throw new ToolInputError(`kind must be one of ${KIND_IDS.join(", ")}`);
+  return value as ItemKind;
+};
+/** A project id, null to unlink ("" or null), or undefined to leave as is. */
+const projectId = (value: unknown, allowUnlink: boolean) => {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") {
+    if (allowUnlink) return null;
+    return undefined;
+  }
+  if (typeof value !== "string" || !UUID.test(value.trim()))
+    throw new ToolInputError("project_id must be a project's id");
+  return value.trim().toLowerCase();
+};
+const refused = (result: unknown) =>
+  typeof result === "object" && result !== null && "refused" in result
+    ? JSON.stringify({ error: REFUSALS[(result as { refused: StoreRefusal }).refused] ?? "Not changed" })
+    : null;
 export function normalizeTags(value: unknown): string[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) throw new ToolInputError("tags must be a list");
@@ -208,6 +305,7 @@ export async function executeTool(
         const limit = Number(input.limit) || 30;
         const notes = await store.list({
           bucket: bucket(input.bucket),
+          kind: kind(input.kind),
           query: str(input.query, "query", 200),
           tag: str(input.tag, "tag", 100),
           includeCompleted: input.include_completed === true,
@@ -231,6 +329,8 @@ export async function executeTool(
           completed:
             typeof input.completed === "boolean" ? input.completed : undefined,
           appendText: str(input.append_text, "append_text", MAX_APPEND),
+          kind: kind(input.kind),
+          projectId: projectId(input.project_id, true),
         };
         if (changes.title === "") delete changes.title;
         if (changes.appendText === "") delete changes.appendText;
@@ -241,27 +341,33 @@ export async function executeTool(
           return JSON.stringify({ error: "Nothing to change" });
         if (budget.writes >= budget.maxWrites)
           return JSON.stringify({ error: "Change limit for this run reached" });
-        const ok = await store.update(
+        const result = await store.update(
           str(input.id, "id", 100, true)!,
           changes,
           str(input.reason, "reason", 300) || "",
         );
-        if (!ok) return JSON.stringify({ error: "Note not found" });
+        const refusal = refused(result);
+        if (refusal) return refusal;
+        if (!result) return JSON.stringify({ error: "Note not found" });
         budget.writes++;
         return JSON.stringify({ ok: true });
       }
       case "create_note": {
         if (budget.writes >= budget.maxWrites)
           return JSON.stringify({ error: "Change limit for this run reached" });
-        const id = await store.create(
-          {
-            title: str(input.title, "title", 200, true)!,
-            body: str(input.body, "body", MAX_APPEND) || "",
-            bucket: bucket(input.bucket, true)!,
-            tags: normalizeTags(input.tags) ?? [],
-          },
-          str(input.reason, "reason", 300) || "",
-        );
+        const note: NewNote = {
+          title: str(input.title, "title", 200, true)!,
+          body: str(input.body, "body", MAX_APPEND) || "",
+          bucket: bucket(input.bucket, true)!,
+          tags: normalizeTags(input.tags) ?? [],
+        };
+        const newKind = kind(input.kind);
+        const project = projectId(input.project_id, false);
+        if (newKind) note.kind = newKind;
+        if (project) note.projectId = project;
+        const id = await store.create(note, str(input.reason, "reason", 300) || "");
+        const refusal = refused(id);
+        if (refusal) return refusal;
         budget.writes++;
         return JSON.stringify({ ok: true, id });
       }

@@ -1,7 +1,11 @@
 import { integrationUser, reply } from "@/lib/integrations/auth";
 import { captureInput, uuid } from "@/lib/integrations/validation";
-import { createNote, textDoc } from "@/lib/notes";
+import { createNote, isItemKind, textDoc } from "@/lib/notes";
 import { toRow } from "@/lib/notes-db";
+
+/** Database field names; additive, so this stays /api/v1. */
+const V1_COLUMNS =
+  "id,workspace_id,title,plain_text,bucket,tags,created_at,updated_at,completed_at,revision,kind,project_id";
 
 async function allowed(auth: Exclude<Awaited<ReturnType<typeof integrationUser>>, { error: Response }>, id: string) {
   const { data, error } = await auth.supabase.from("workspaces").select("id")
@@ -17,14 +21,16 @@ export async function GET(request: Request) {
   const workspaceId = query.get("workspaceId") ?? "";
   const limit = Number(query.get("limit") ?? 50);
   const offset = Number(query.get("offset") ?? 0);
+  const kind = query.get("kind");
   if (!uuid.test(workspaceId) || !Number.isInteger(limit) || limit < 1 || limit > 100 ||
-    !Number.isSafeInteger(offset) || offset < 0 || offset > 100000)
-    return reply({ error: "Provide workspaceId, limit (1–100), and offset (0–100000)" }, 400);
+    !Number.isSafeInteger(offset) || offset < 0 || offset > 100000 || (kind !== null && !isItemKind(kind)))
+    return reply({ error: "Provide workspaceId, limit (1–100), offset (0–100000), and optionally a valid kind" }, 400);
   const denied = await allowed(auth, workspaceId);
   if (denied) return denied;
-  const { data, error } = await auth.supabase.from("notes")
-    .select("id,workspace_id,title,plain_text,bucket,tags,created_at,updated_at,completed_at,revision")
-    .eq("user_id", auth.user.id).eq("workspace_id", workspaceId)
+  let select = auth.supabase.from("notes").select(V1_COLUMNS)
+    .eq("user_id", auth.user.id).eq("workspace_id", workspaceId);
+  if (kind) select = select.eq("kind", kind);
+  const { data, error } = await select
     .order("updated_at", { ascending: false }).order("id").range(offset, offset + limit - 1);
   if (error) return reply({ error: "Could not load notes" }, 500);
   return reply({ notes: data, offset, limit });
@@ -56,8 +62,10 @@ export async function POST(request: Request) {
   note.content = textDoc(body.text);
   // Create-only: a fresh id, and the revision trigger starts every insert at 1.
   // Before direct writes are revoked (ADR 002 phase C′) this moves to
-  // save_notes() with expected_revision null.
-  const { error } = await auth.supabase.from("notes").insert(toRow(note, auth.user.id));
+  // save_notes() with expected_revision null. Captures never send kind or
+  // project_id; the column defaults make them unlinked notes (ADR 001 §2).
+  const { kind: _kind, project_id: _project, ...row } = toRow(note, auth.user.id);
+  const { error } = await auth.supabase.from("notes").insert(row);
   if (error) return reply({ error: "Could not capture note" }, 500);
   return reply({ id: note.id, workspaceId: note.workspaceId, bucket: note.bucket, revision: 1 }, 201);
 }

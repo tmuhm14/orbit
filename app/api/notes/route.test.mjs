@@ -39,9 +39,16 @@ function rpc(name, args) {
           return { id: item.id, status: "conflict", expectedRevision: expected,
             currentRevision: existing?.revision ?? null, current: existing ? current(existing) : null };
         const { expected_revision: _e, ...values } = item;
+        // Link rules are the database's (see note-projects.test.mjs); the
+        // double knows just enough to return a per-item code.
+        const parent = values.project_id && rows.get(values.project_id);
+        if (values.project_id && (parent?.kind !== "project" || parent.workspace_id !== values.workspace_id))
+          return { id: item.id, status: "invalid", code: "invalid_project_link" };
         const revision = existing ? existing.revision + 1 : 1;
         const saved = { ...existing, ...values, user_id: USER, revision, source: "web", origin: null,
-          updated_at: new Date().toISOString(), due_date: values.due_date ?? existing?.due_date ?? null };
+          updated_at: new Date().toISOString(), due_date: values.due_date ?? existing?.due_date ?? null,
+          kind: values.kind ?? existing?.kind ?? "note",
+          project_id: Object.hasOwn(values, "project_id") ? values.project_id : existing?.project_id ?? null };
         rows.set(item.id, saved);
         return { id: item.id, status: "saved", revision, updatedAt: saved.updated_at };
       }),
@@ -52,6 +59,11 @@ function rpc(name, args) {
     if (!existing) return { error: null, data: { status: "not_found" } };
     if (args.p_expected_revision !== null && existing.revision !== args.p_expected_revision)
       return { error: null, data: { status: "conflict", currentRevision: existing.revision, current: current(existing) } };
+    const children = [...rows.values()].filter((r) => r.project_id === args.p_id);
+    if (children.length && !args.p_unlink_children)
+      return { error: null, data: { status: "project_has_linked_items", count: children.length,
+        currentRevision: existing.revision, current: current(existing) } };
+    for (const child of children) Object.assign(child, { project_id: existing.project_id ?? null, revision: child.revision + 1 });
     rows.delete(args.p_id);
     return { error: null, data: { status: "deleted", id: args.p_id } };
   }
@@ -155,4 +167,71 @@ test("delete with a stale revision is refused and returns the server copy", asyn
   const legacy = await del(note.id);
   assert.deepEqual([legacy.status, legacy.body.code], [428, "precondition_required"]);
   assert.deepEqual(metrics.at(-1), { writer: "W2", route: "DELETE /api/notes/:id", count: 1, outcome: "rejected" });
+});
+
+test("kind and project links: saved when valid, per-item 422 codes when not", async () => {
+  const project = { ...newNote("Launch"), kind: "project" };
+  const task = { ...newNote("Draft plan"), kind: "task", projectId: project.id };
+  const saved = await put([{ ...project, expectedRevision: null }, { ...task, expectedRevision: null }]);
+  assert.equal(saved.status, 200);
+  assert.deepEqual([rows.get(task.id).kind, rows.get(task.id).project_id], ["task", project.id]);
+  const sent = calls.at(-1)[1].p_notes;
+  assert.deepEqual([sent[1].kind, sent[1].project_id], ["task", project.id]);
+  // A legacy client never sends kind or projectId; the item keeps both.
+  const { kind: _k, projectId: _p, ...legacy } = { ...task, title: "Old tab" };
+  await put([{ ...legacy, expectedRevision: 1 }]);
+  const legacyItem = calls.at(-1)[1].p_notes[0];
+  assert.equal(Object.hasOwn(legacyItem, "kind") || Object.hasOwn(legacyItem, "project_id"), false);
+  assert.deepEqual([rows.get(task.id).kind, rows.get(task.id).project_id], ["task", project.id]);
+  const plain = newNote("Not a project");
+  await put([{ ...plain, expectedRevision: null }]);
+  const bad = await put([{ ...newNote("Child"), projectId: plain.id, expectedRevision: null }, { ...newNote("Fine"), expectedRevision: null }]);
+  assert.deepEqual([bad.status, bad.body.code, bad.body.saved], [422, "invalid_project_link", 1]);
+  assert.deepEqual(bad.body.results[0], { id: bad.body.results[0].id, status: "invalid", code: "invalid_project_link" });
+  assert.doesNotMatch(bad.body.error, /Child|Not a project/);
+  for (const invalid of [{ kind: "epic" }, { projectId: "not-a-uuid" }, { projectId: 7 }]) {
+    const response = await put([{ ...newNote("x"), ...invalid, expectedRevision: null }]);
+    assert.deepEqual([response.status, response.body.code], [400, "invalid_payload"]);
+  }
+});
+
+test("deleting a project with linked items needs unlinkChildren", async () => {
+  const parent = { ...newNote("Area"), kind: "project" };
+  const project = { ...newNote("Launch"), kind: "project", projectId: parent.id };
+  const child = { ...newNote("Draft"), projectId: project.id };
+  await put([{ ...parent, expectedRevision: null }, { ...project, expectedRevision: null }, { ...child, expectedRevision: null }]);
+  const refused = await del(project.id, 1);
+  assert.deepEqual([refused.status, refused.body.code, refused.body.count, refused.body.currentRevision],
+    [409, "project_has_linked_items", 1, 1]);
+  assert.equal(refused.body.current.id, project.id);
+  assert.equal(calls.at(-1)[1].p_unlink_children, false);
+  assert.ok(rows.has(project.id));
+  const response = await noteRoute.DELETE(
+    new Request(`http://localhost/api/notes/${project.id}?expectedRevision=1&unlinkChildren=true`, { method: "DELETE" }),
+    { params: Promise.resolve({ id: project.id }) });
+  assert.equal(response.status, 200);
+  assert.equal(calls.at(-1)[1].p_unlink_children, true);
+  assert.equal(rows.get(child.id).project_id, parent.id, "moved up to the grandparent");
+  const invalid = await noteRoute.DELETE(
+    new Request(`http://localhost/api/notes/${parent.id}?unlinkChildren=yes`, { method: "DELETE" }),
+    { params: Promise.resolve({ id: parent.id }) });
+  assert.equal(invalid.status, 400);
+});
+
+test("GET returns kind and projectId; legacy rows read as notes", async () => {
+  const selects = [];
+  const base = { workspace_id: WS, content: { type: "doc" }, plain_text: "", tags: [], source: "web", origin: null,
+    created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-01T00:00:00Z", completed_at: null, due_date: null };
+  const data = [
+    { ...base, id: "11111111-1111-4111-8111-111111111111", title: "Old", bucket: "projects", revision: 1 },
+    { ...base, id: "22222222-2222-4222-8222-222222222222", title: "New", bucket: "next", revision: 2, kind: "task",
+      project_id: "33333333-3333-4333-8333-333333333333" },
+  ];
+  const query = { select: (c) => (selects.push(c), query), order: () => query, returns: async () => ({ error: null, data }) };
+  const listAuth = { user: { id: USER }, supabase: { from: () => query } };
+  const route = loadTs(new URL("./route.ts", import.meta.url),
+    { ...imports, "@/lib/supabase/route-auth": { routeUser: async () => listAuth, json } });
+  const { notes } = await (await route.GET(new Request("http://localhost/api/notes"))).json();
+  assert.match(selects[0], /,kind,project_id$/);
+  assert.deepEqual(notes.map((n) => [n.kind, n.projectId]), [["note", null], ["task", "33333333-3333-4333-8333-333333333333"]]);
 });

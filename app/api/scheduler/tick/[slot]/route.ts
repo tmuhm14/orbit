@@ -5,6 +5,24 @@ import { runScheduledTask, type ScheduledTask } from "@/lib/scheduled/server";
 export const maxDuration = 300;
 export const runtime = "nodejs";
 
+// Agent action values (copies of note content) are kept 90 days, the same as
+// the undo window (ADR 002 §5). Purged once a day from this one slot; the
+// purge only clears values older than the window, so a repeated or retried
+// tick is harmless.
+const PURGE_SLOT = "03";
+
+async function purgeAgentActionValues(admin: NonNullable<ReturnType<typeof createAdminClient>>) {
+  try {
+    const { data, error } = await admin.rpc("purge_agent_action_values");
+    if (error) throw new Error("purge failed");
+    return Number(data) || 0;
+  } catch {
+    // Counts only; never ids or content.
+    console.error("agent action purge failed");
+    return null;
+  }
+}
+
 export async function GET(request: Request, { params }: { params: Promise<{ slot: string }> }) {
   const secret = process.env.CRON_SECRET;
   if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`)
@@ -17,6 +35,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slot
   scheduledInstant.setUTCHours(Number(slot), 0, 0, 0);
   const admin = createAdminClient();
   if (!admin) return new Response("Unavailable", { status: 503 });
+  const purged = slot === PURGE_SLOT ? await purgeAgentActionValues(admin) : undefined;
   const { data: tasks, error } = await admin.from("scheduled_tasks")
     .select("id,user_id,name,kind,enabled,timezone,delivery_hour,cadence,jira_projects,github_repos,created_at")
     .eq("enabled", true).returns<ScheduledTask[]>();
@@ -32,5 +51,5 @@ export async function GET(request: Request, { params }: { params: Promise<{ slot
       failed++;
     }
   }
-  return Response.json({ completed, failed });
+  return Response.json({ completed, failed, ...(purged !== undefined ? { purged } : {}) });
 }

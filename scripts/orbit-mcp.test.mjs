@@ -13,6 +13,14 @@ test('MCP initializes, discovers tools, validates input and safely reports API f
     assert.deepEqual(tools.map(t => t.name), ['orbit_list_workspaces', 'orbit_list_notes', 'orbit_capture_note']);
     const invalid = await client.callTool({ name: 'orbit_list_notes', arguments: { workspaceId: 'invalid' } });
     assert.equal(invalid.isError, true);
+    const list = tools.find(t => t.name === 'orbit_list_notes');
+    assert.deepEqual(list.inputSchema.properties.kind.enum, ['note', 'task', 'project', 'document', 'followup']);
+    assert.equal(list.inputSchema.required.includes('kind'), false);
+    const capture = tools.find(t => t.name === 'orbit_capture_note');
+    assert.equal(Object.hasOwn(capture.inputSchema.properties, 'kind'), false, 'captures stay notes');
+    const badKind = await client.callTool({ name: 'orbit_list_notes',
+      arguments: { workspaceId: '12345678-1234-4234-8234-123456789abc', kind: 'epic' } });
+    assert.equal(badKind.isError, true);
     const failed = await client.callTool({ name: 'orbit_list_workspaces', arguments: {} });
     assert.equal(failed.isError, true);
     assert.equal(JSON.stringify(failed).includes('synthetic-test-token'), false);

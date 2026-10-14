@@ -8,6 +8,7 @@ import {
   createRun,
   executeRun,
 } from "@/lib/agent/server";
+import { isUndoable } from "@/lib/agent/agent";
 
 // The run continues after the response, up to this limit.
 export const maxDuration = 300;
@@ -50,10 +51,15 @@ export async function GET(request: Request) {
         .order("created_at")
     : { data: [], error: null };
   if (actionError) return json({ error: "Couldn't load agent activity" }, 500);
+  const now = Date.now();
   return json({
     runs: runs.map((run) => ({
       ...run,
-      actions: actions.filter((a) => a.run_id === run.id),
+      // undoable: false once undone or past the 90-day window (ADR 002 §5),
+      // so the UI can hide the button.
+      actions: actions
+        .filter((a) => a.run_id === run.id)
+        .map((a) => ({ ...a, undoable: isUndoable(a, now) })),
     })),
   });
 }
