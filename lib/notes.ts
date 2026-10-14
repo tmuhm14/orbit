@@ -51,6 +51,18 @@ export const BUCKETS = [
   },
 ] as const;
 export type BucketId = (typeof BUCKETS)[number]["id"];
+/**
+ * What an item is (ADR 001 §2), independent of its bucket (where it sits in
+ * the GTD workflow). Items without a kind (older data) are notes.
+ */
+export const ITEM_KINDS = ["note", "task", "project", "document", "followup"] as const;
+export type ItemKind = (typeof ITEM_KINDS)[number];
+export const isItemKind = (value: unknown): value is ItemKind =>
+  ITEM_KINDS.includes(value as ItemKind);
+/** The item's kind; notes from before kinds existed are notes. */
+export const itemKind = (note: Pick<Note, "kind">): ItemKind => note.kind ?? "note";
+/** Longest chain of nested projects: a root project plus four levels. */
+export const MAX_PROJECT_DEPTH = 5;
 export type Note = {
   id: string;
   title: string;
@@ -72,6 +84,10 @@ export type Note = {
    * client's synced map is the source of truth for what it last confirmed.
    */
   revision?: number;
+  /** Absent in older data, which reads as "note". */
+  kind?: ItemKind;
+  /** Parent project: a kind "project" item in the same workspace. */
+  projectId?: string | null;
 };
 export type Workspace = {
   id: string;
@@ -130,6 +146,8 @@ export function createNote(
     dueDate: null,
     source: "web",
     workspaceId,
+    kind: "note",
+    projectId: null,
   };
 }
 export function isNote(value: unknown): value is Note {
@@ -148,6 +166,10 @@ export function isNote(value: unknown): value is Note {
     (n.dueDate === undefined || n.dueDate === null || isDueDate(n.dueDate)) &&
     (n.revision === undefined ||
       (Number.isSafeInteger(n.revision) && n.revision >= 1)) &&
+    (n.kind === undefined || isItemKind(n.kind)) &&
+    (n.projectId === undefined ||
+      n.projectId === null ||
+      typeof n.projectId === "string") &&
     (n.source === undefined ||
       n.source === "web" ||
       n.source === "slack" ||
@@ -238,6 +260,151 @@ export const browserNotes = {
   },
 };
 
+// --- Kinds and project links (ADR 001 §3, §7) ------------------------------
+
+/**
+ * Why a project link or kind change was refused. The database is the source
+ * of truth; projectLinkError() mirrors its rules so the UI can explain them
+ * before saving.
+ */
+export const LINK_ERROR_CODES = [
+  "invalid_project_link",
+  "project_cycle",
+  "project_depth_exceeded",
+  "linked_item_move",
+  "project_has_linked_items",
+] as const;
+export type LinkErrorCode = (typeof LINK_ERROR_CODES)[number];
+export const isLinkErrorCode = (value: unknown): value is LinkErrorCode =>
+  LINK_ERROR_CODES.includes(value as LinkErrorCode);
+/** Short, content-free explanations for each code. */
+export const LINK_ERROR_MESSAGES: Record<LinkErrorCode, string> = {
+  invalid_project_link: "That item can't be linked to this project.",
+  project_cycle: "A project can't be placed inside one of its own sub-projects.",
+  project_depth_exceeded: `Projects can be nested at most ${MAX_PROJECT_DEPTH} levels deep.`,
+  linked_item_move: "Unlink this item from its project before moving it to another space.",
+  project_has_linked_items: "This project still has linked items.",
+};
+
+/** Projects in a workspace, by title. */
+export function projectsIn(notes: Note[], workspaceId: string): Note[] {
+  return notes
+    .filter((n) => n.workspaceId === workspaceId && itemKind(n) === "project")
+    .sort((a, b) => a.title.localeCompare(b.title));
+}
+
+/** Items linked directly to a project. */
+export const projectChildren = (notes: Note[], projectId: string) =>
+  notes.filter((n) => n.projectId === projectId);
+
+/** Projects above an item, nearest first (bounded, so bad data can't loop). */
+export function projectAncestors(notes: Note[], id: string): Note[] {
+  const byId = new Map(notes.map((n) => [n.id, n]));
+  const out: Note[] = [];
+  let parent = byId.get(id)?.projectId;
+  while (parent && out.length <= MAX_PROJECT_DEPTH) {
+    const next = byId.get(parent);
+    if (!next || out.includes(next)) break;
+    out.push(next);
+    parent = next.projectId;
+  }
+  return out;
+}
+
+/** Everything under a project with its depth (1 = direct contents). */
+export function projectDescendants(
+  notes: Note[],
+  projectId: string,
+): { note: Note; depth: number }[] {
+  const out: { note: Note; depth: number }[] = [];
+  const seen = new Set([projectId]);
+  let level = [projectId];
+  for (let depth = 1; level.length && depth <= MAX_PROJECT_DEPTH; depth++) {
+    const next: string[] = [];
+    for (const child of notes.filter((n) => n.projectId && level.includes(n.projectId))) {
+      if (seen.has(child.id)) continue;
+      seen.add(child.id);
+      out.push({ note: child, depth });
+      if (itemKind(child) === "project") next.push(child.id);
+    }
+    level = next;
+  }
+  return out;
+}
+
+/** Height of a project's own sub-project subtree (0 without sub-projects). */
+function projectHeight(notes: Note[], projectId: string) {
+  return projectDescendants(notes, projectId)
+    .filter((d) => itemKind(d.note) === "project")
+    .reduce((max, d) => Math.max(max, d.depth), 0);
+}
+
+/**
+ * Whether item `id` may have `projectId` as its parent while being `kind`
+ * (its current kind by default), by the same rules as the database. Returns
+ * null when allowed. Only sees the notes it is given.
+ */
+export function projectLinkError(
+  notes: Note[],
+  id: string,
+  projectId: string | null,
+  kind?: ItemKind,
+): LinkErrorCode | null {
+  const item = notes.find((n) => n.id === id);
+  const nextKind = kind ?? (item ? itemKind(item) : "note");
+  if (item && itemKind(item) === "project" && nextKind !== "project" &&
+      notes.some((n) => n.projectId === id))
+    return "project_has_linked_items";
+  if (projectId === null) return null;
+  const parent = notes.find((n) => n.id === projectId);
+  if (projectId === id || !parent || itemKind(parent) !== "project" ||
+      (item && parent.workspaceId !== item.workspaceId))
+    return "invalid_project_link";
+  if (nextKind !== "project") return null;
+  const above = projectAncestors(notes, projectId);
+  if (above.some((n) => n.id === id)) return "project_cycle";
+  if (above.length + 2 + projectHeight(notes, id) > MAX_PROJECT_DEPTH)
+    return "project_depth_exceeded";
+  return null;
+}
+
+/**
+ * Orders a batch so a new parent is saved before the items that link to it,
+ * and unlinks before links. The server checks each item on its own.
+ */
+export function orderForSave<T extends Note>(notes: T[]): T[] {
+  const ids = new Set(notes.map((n) => n.id));
+  const placed = new Set<string>();
+  const unlinked = notes
+    .filter((n) => !n.projectId)
+    .sort((a, b) => Number(itemKind(a) === "project") - Number(itemKind(b) === "project"));
+  const out: T[] = [...unlinked];
+  unlinked.forEach((n) => placed.add(n.id));
+  let rest = notes.filter((n) => n.projectId);
+  while (rest.length) {
+    const ready = rest.filter((n) => !ids.has(n.projectId!) || placed.has(n.projectId!));
+    // A cycle within the batch: send the rest as they are; the server refuses it.
+    const batch = ready.length ? ready : rest;
+    batch.forEach((n) => {
+      out.push(n);
+      placed.add(n.id);
+    });
+    rest = rest.filter((n) => !batch.includes(n));
+  }
+  return out;
+}
+
+/** Current export file format. Version 1 files have no kind or projectId. */
+export const EXPORT_VERSION = 2;
+/** The JSON backup of an account's notes, with kind and projectId on each. */
+export function exportDocument(notes: Note[], exportedAt = new Date().toISOString()) {
+  return {
+    version: EXPORT_VERSION,
+    exportedAt,
+    notes: notes.map((n) => ({ ...n, kind: itemKind(n), projectId: n.projectId ?? null })),
+  };
+}
+
 // --- Revisions and conflicts (ADR 002) -------------------------------------
 
 /** Build number of this client's save protocol, sent as X-Orbit-Client. */
@@ -267,7 +434,7 @@ export type SaveResult =
   | {
       id: string;
       status: "invalid";
-      code: "invalid_project_link" | "linked_item_move" | "not_found" | "invalid_note";
+      code: LinkErrorCode | "not_found" | "invalid_note";
     };
 
 export type SaveResponse = {
@@ -317,16 +484,23 @@ export function pendingWrites(
   notes: Note[],
   synced: SyncedMap,
   conflicted: ReadonlySet<string> = new Set(),
+  /** Refused link changes (id → updatedAt); resent only after another edit. */
+  rejected: ReadonlyMap<string, string> = new Map(),
 ) {
   const ids = new Set(notes.map((n) => n.id));
   return {
-    changed: notes
-      .filter(
-        (n) => !conflicted.has(n.id) && synced.get(n.id)?.updatedAt !== n.updatedAt,
-      )
-      .map(
-        (n): NoteWrite => ({ ...n, expectedRevision: expectedRevisionFor(synced, n.id) }),
-      ),
+    changed: orderForSave(
+      notes
+        .filter(
+          (n) =>
+            !conflicted.has(n.id) &&
+            rejected.get(n.id) !== n.updatedAt &&
+            synced.get(n.id)?.updatedAt !== n.updatedAt,
+        )
+        .map(
+          (n): NoteWrite => ({ ...n, expectedRevision: expectedRevisionFor(synced, n.id) }),
+        ),
+    ),
     deleted: [...synced.keys()]
       .filter((id) => !ids.has(id) && !conflicted.has(id))
       .map((id) => ({ id, expectedRevision: synced.get(id)?.revision ?? null })),
@@ -336,8 +510,10 @@ export function pendingWrites(
 /**
  * Applies per-item save results. Saved items record the server revision and
  * the updatedAt that was sent (later local edits stay dirty). Conflicts are
- * returned for the caller to keep as drafts. `failed` is true when an item
- * could not be saved for another reason and should be retried later.
+ * returned for the caller to keep as drafts. Items refused by a project rule
+ * (ADR 001 §7) are returned as `rejected`: retrying cannot help, so the
+ * caller holds them until the user changes them again. `failed` is true when
+ * an item could not be saved for another reason and should be retried later.
  */
 export function applySaveResults(
   synced: SyncedMap,
@@ -347,6 +523,7 @@ export function applySaveResults(
   const next = new Map(synced);
   const sentById = new Map(sent.map((n) => [n.id, n]));
   const conflicts: ConflictInfo[] = [];
+  const rejected: { id: string; code: LinkErrorCode; updatedAt: string }[] = [];
   let failed = false;
   for (const result of results) {
     const note = sentById.get(result.id);
@@ -360,10 +537,12 @@ export function applySaveResults(
         currentRevision: result.currentRevision,
         server: result.current ?? null,
       });
+    else if (result.status === "invalid" && isLinkErrorCode(result.code))
+      rejected.push({ id: result.id, code: result.code, updatedAt: note.updatedAt });
     else failed = true;
   }
   if (results.length < sent.length) failed = true;
-  return { synced: next, conflicts, failed };
+  return { synced: next, conflicts, rejected, failed };
 }
 
 /**
