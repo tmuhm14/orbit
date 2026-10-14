@@ -33,6 +33,10 @@ test("undo refuses after an intervening edit and names only the fields", async (
   const { undo } = route({ status: "undo_conflict", fields: ["title"] });
   const response = await undo();
   assert.deepEqual([response.status, response.body.code, response.body.fields], [409, "undo_conflict", ["title"]]);
+  assert.equal(Object.hasOwn(response.body, "reason"), false);
+  const cycle = await route({ status: "undo_conflict", fields: ["project_id"], reason: "project_cycle" }).undo();
+  assert.deepEqual([cycle.status, cycle.body.code, cycle.body.fields, cycle.body.reason],
+    [409, "undo_conflict", ["project_id"], "project_cycle"]);
   const edited = await route({ status: "edited_since_created" }).undo();
   assert.deepEqual([edited.status, edited.body.code], [409, "edited_since_created"]);
 });

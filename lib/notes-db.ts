@@ -1,7 +1,10 @@
 import "server-only";
 import {
   BUCKETS,
+  LINK_ERROR_CODES,
+  isItemKind,
   isNote,
+  type ItemKind,
   type Note,
   type NoteWrite,
   type SaveResponse,
@@ -9,7 +12,7 @@ import {
 } from "./notes";
 
 export const NOTE_COLUMNS =
-  "id,workspace_id,title,content,plain_text,bucket,tags,source,origin,created_at,updated_at,completed_at,due_date,revision";
+  "id,workspace_id,title,content,plain_text,bucket,tags,source,origin,created_at,updated_at,completed_at,due_date,revision,kind,project_id";
 
 export type NoteRow = {
   id: string;
@@ -27,6 +30,9 @@ export type NoteRow = {
   due_date: string | null;
   /** Absent only in rows selected before revisions existed. */
   revision?: number;
+  /** Absent only in rows selected before kinds existed (read as "note"). */
+  kind?: ItemKind;
+  project_id?: string | null;
 };
 
 // Postgres returns microsecond offsets ("+00:00"); the client compares the
@@ -49,6 +55,8 @@ export function fromRow(row: NoteRow): Note {
     completedAt: row.completed_at && iso(row.completed_at),
     dueDate: row.due_date ?? null,
     ...(row.revision != null ? { revision: Number(row.revision) } : {}),
+    kind: row.kind ?? "note",
+    projectId: row.project_id ?? null,
   };
 }
 
@@ -66,7 +74,10 @@ export function toRow(note: Note, userId: string) {
     created_at: note.createdAt,
     updated_at: note.updatedAt,
     completed_at: note.completedAt,
+    // Absent means unchanged, so older clients can never reset these.
     ...(note.dueDate !== undefined ? { due_date: note.dueDate } : {}),
+    ...(note.kind !== undefined ? { kind: note.kind } : {}),
+    ...(note.projectId !== undefined ? { project_id: note.projectId } : {}),
   };
 }
 
@@ -88,6 +99,11 @@ export function isSavableNote(value: unknown): value is Note {
     !Number.isNaN(Date.parse(value.updatedAt)) &&
     (value.completedAt === null ||
       !Number.isNaN(Date.parse(value.completedAt))) &&
+    (value.kind === undefined || isItemKind(value.kind)) &&
+    // Whether the link is allowed is left to the database.
+    (value.projectId === undefined ||
+      value.projectId === null ||
+      UUID.test(value.projectId)) &&
     JSON.stringify(value.content).length + value.plainText.length <= MAX_CONTENT
   );
 }
@@ -142,9 +158,8 @@ type RawSaveResult = {
   code?: string;
 };
 
-const INVALID_CODES = new Set([
-  "invalid_project_link",
-  "linked_item_move",
+const INVALID_CODES = new Set<string>([
+  ...LINK_ERROR_CODES,
   "not_found",
   "invalid_note",
 ]);
@@ -227,10 +242,23 @@ export function saveResponse(
 }
 
 type RawDeleteResult = {
-  status: "deleted" | "not_found" | "conflict" | "precondition_required";
+  status:
+    | "deleted"
+    | "not_found"
+    | "conflict"
+    | "precondition_required"
+    | "project_has_linked_items";
   currentRevision?: number;
   current?: NoteRow;
+  /** Direct children, for project_has_linked_items. */
+  count?: number;
 };
+
+/** Parses ?unlinkChildren=: only "true" unlinks; absent or "false" does not. */
+export function parseUnlinkChildren(value: string | null): boolean | "invalid" {
+  if (value === null || value === "" || value === "false") return false;
+  return value === "true" ? true : "invalid";
+}
 
 /**
  * Status and body for a conditional delete. A legacy delete (no expected
@@ -266,6 +294,20 @@ export function deleteResponse(
       return {
         status: 428,
         body: { error: "Reload to keep saving", code: "precondition_required" },
+      };
+    case "project_has_linked_items":
+      // Confirm with the user, then repeat with unlinkChildren=true.
+      return {
+        status: 409,
+        body: {
+          error: "This project has linked items and was not deleted",
+          code: "project_has_linked_items",
+          count: Number(result.count),
+          currentRevision: Number(result.currentRevision),
+          ...(includeCurrent && result.current
+            ? { current: fromRow(result.current) }
+            : {}),
+        },
       };
     default:
       return null;
