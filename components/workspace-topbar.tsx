@@ -33,7 +33,7 @@ export function WorkspaceTopbar({
         </button>
         <WorkspaceSwitcher variant="pill" {...switcherProps} />
         <ChevronRight size={13} />
-        <strong>
+        <strong className="breadcrumb-current">
           {settingsPage ? "Settings" : scheduledPage ? "Scheduled jobs" : search
             ? "Search"
             : bucket?.name ||
@@ -62,12 +62,14 @@ export function WorkspaceTopbar({
           <Bot size={18} />
         </button>
         {!settingsPage && !scheduledPage && <button
-          className="primary-button small"
+          className="primary-button small topbar-new-note"
           onClick={newNote}
           disabled={!loaded || loadError}
+          title="New note"
         >
-          <Plus size={16} />
-          New note
+          <Plus size={16} aria-hidden="true" />
+          {/* Visually hidden on phones; still the button's accessible name. */}
+          <span className="topbar-new-note-label">New note</span>
         </button>}
       </div>
     </header>

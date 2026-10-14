@@ -93,7 +93,10 @@ const LISTS: Record<"inbox" | "next" | "waiting", ListConfig> = {
 
 /** A short Home list for one bucket, with a link to the full bucket view. */
 export function HomeList({ kind }: { kind: keyof typeof LISTS }) {
-  const { notes, workspaceId, loaded, loadError, navigate, openNote } = useWorkspaceShell();
+  const { notes, workspaceId, loaded, loadError, navigate, openNote, capture } =
+    useWorkspaceShell();
+  // Only a real quick capture sets this; loads and background refreshes don't.
+  const justCaptured = capture.feedback?.id;
   // Dates are locale/timezone dependent, so they render only after mount.
   const today = useLocalToday();
   const config = LISTS[kind];
@@ -147,7 +150,7 @@ export function HomeList({ kind }: { kind: keyof typeof LISTS }) {
               const SourceIcon = note.source === "slack" ? MessageSquare : note.source === "email" ? Mail : null;
               const overdue = kind === "next" && today && isDueDate(note.dueDate) && note.dueDate <= today;
               return (
-                <li key={note.id}>
+                <li key={note.id} className={note.id === justCaptured ? "home-item-new" : undefined}>
                   <button className="home-item" onClick={() => openNote(note.id)}>
                     <strong>{untitled(note)}</strong>
                     <span className={`home-item-meta ${overdue ? "is-due" : ""}`}>

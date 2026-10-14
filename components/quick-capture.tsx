@@ -6,8 +6,11 @@ import { useWorkspaceShell } from "./workspace-shell-context";
 
 export function QuickCapture() {
   const { capture, loaded, loadError } = useWorkspaceShell();
+  const { feedback } = capture;
+  // Alternate class names so back-to-back captures restart the box animation.
+  const launched = feedback ? ` is-launched is-launched-${feedback.seq % 2 ? "a" : "b"}` : "";
   return (
-    <section className="capture-box capture-compact" aria-label="Quick capture">
+    <section className={`capture-box capture-compact${launched}`} aria-label="Quick capture">
       <div className="capture-main">
         <Plus size={21} />
         <textarea
@@ -31,7 +34,10 @@ export function QuickCapture() {
           onClick={capture.submit}
           disabled={!capture.text.trim() || !loaded || loadError}
         >
-          <ArrowUp size={18} />
+          {/* Remounted per capture so the launch animation restarts. */}
+          <span className="capture-launch-icon" key={feedback?.seq ?? "idle"} aria-hidden="true">
+            <ArrowUp size={18} />
+          </span>
         </button>
       </div>
       <div className="capture-bottom">

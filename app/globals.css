@@ -14,6 +14,23 @@
   --amber: #d0b185;
   --pink: #c69eb9;
   --slate: #a4a8bc;
+  /* Motion tokens. Durations collapse under reduced motion (see below). */
+  --motion-fast: 150ms;
+  --motion-base: 250ms;
+  --motion-slow: 500ms;
+  --motion-ambient: 24s;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  /* A little overshoot, like settling into orbit. */
+  --ease-orbit: cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0.01ms;
+    --motion-base: 0.01ms;
+    --motion-slow: 0.01ms;
+    --motion-ambient: 0.01ms;
+  }
 }
 * {
   box-sizing: border-box;
@@ -82,10 +99,10 @@ textarea {
 }
 button {
   transition:
-    background 0.18s,
-    color 0.18s,
-    border-color 0.18s,
-    transform 0.18s;
+    background var(--motion-fast),
+    color var(--motion-fast),
+    border-color var(--motion-fast),
+    transform var(--motion-fast);
 }
 button:active:not(:disabled) {
   transform: translateY(1px);
@@ -826,8 +843,8 @@ main {
   border-radius: 9px;
   box-shadow: 0 0 25px #ac85d204;
   transition:
-    border-color 0.2s,
-    box-shadow 0.2s;
+    border-color var(--motion-base) var(--ease-out),
+    box-shadow var(--motion-base) var(--ease-out);
 }
 .capture-box:focus-within {
   border-color: #b998e273;
@@ -869,6 +886,53 @@ main {
   color: #a993bc;
   opacity: 0.9;
   cursor: default;
+}
+.capture-launch-icon {
+  display: grid;
+  place-items: center;
+}
+/* Capture feedback: only applied right after a real quick capture. */
+.capture-box.is-launched-a {
+  animation: capture-glow-a var(--motion-slow) var(--ease-out);
+}
+.capture-box.is-launched-b {
+  animation: capture-glow-b var(--motion-slow) var(--ease-out);
+}
+.capture-box.is-launched .capture-submit {
+  overflow: hidden;
+}
+.capture-box.is-launched .capture-launch-icon {
+  animation: capture-launch var(--motion-slow) var(--ease-orbit);
+}
+@keyframes capture-glow-a {
+  30% {
+    border-color: #d0baf8a6;
+    box-shadow: 0 0 34px #b09aeb33;
+  }
+}
+@keyframes capture-glow-b {
+  30% {
+    border-color: #d0baf8a6;
+    box-shadow: 0 0 34px #b09aeb33;
+  }
+}
+@keyframes capture-launch {
+  0% {
+    translate: 0 0;
+    opacity: 1;
+  }
+  40% {
+    translate: 0 -22px;
+    opacity: 0;
+  }
+  41% {
+    translate: 0 16px;
+    opacity: 0;
+  }
+  100% {
+    translate: 0 0;
+    opacity: 1;
+  }
 }
 .capture-bottom {
   display: flex;
@@ -967,7 +1031,7 @@ main {
     #17171c 90%
   );
   overflow: hidden;
-  animation: rise 0.5s both;
+  animation: rise var(--motion-slow) var(--ease-out) both;
 }
 .bucket-card:hover {
   background: linear-gradient(
@@ -1016,8 +1080,8 @@ main {
   opacity: 0;
   color: var(--accent);
   transition:
-    opacity 0.2s,
-    transform 0.2s;
+    opacity var(--motion-base),
+    transform var(--motion-base);
   transform: translate(-3px, 3px);
 }
 .bucket-card:hover .bucket-card-title svg {
@@ -1113,7 +1177,7 @@ main {
   text-align: left;
   padding: 16px 19px;
   border-bottom: 1px solid #ffffff07;
-  transition: background 0.2s;
+  transition: background var(--motion-base);
 }
 .note-row:last-child {
   border-bottom: 0;
@@ -1372,7 +1436,7 @@ main {
   color: #e2d4ed;
   font-size: 12px;
   box-shadow: 0 12px 35px #0005;
-  animation: toast-in 0.25s both;
+  animation: toast-in var(--motion-base) var(--ease-out) both;
 }
 .toast > span {
   display: grid;
@@ -1411,7 +1475,7 @@ main {
   border-radius: 9px;
   background: #15141966;
   overflow: hidden;
-  transition: border-color 0.15s, background 0.15s;
+  transition: border-color var(--motion-fast), background var(--motion-fast);
 }
 .bucket-group.is-drop-target {
   border-color: var(--accent);
@@ -1516,7 +1580,7 @@ main {
   align-items: center;
   justify-content: center;
   padding: 35px;
-  animation: fade 0.2s ease;
+  animation: fade var(--motion-base) var(--ease-out);
 }
 .editor-dialog {
   position: relative;
@@ -1531,7 +1595,7 @@ main {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  animation: rise 0.25s ease;
+  animation: rise var(--motion-base) var(--ease-out);
 }
 .editor-topbar {
   height: 53px;
@@ -1875,7 +1939,7 @@ main {
   padding: 6px;
   z-index: 2;
   overscroll-behavior: contain;
-  animation: fade 0.15s ease;
+  animation: fade var(--motion-fast) var(--ease-out);
 }
 .slash-menu-label {
   font-size: 12px;
@@ -1942,7 +2006,7 @@ main {
   flex-wrap: wrap;
   box-shadow: 0 20px 80px #0006;
   color: #b29bc3;
-  animation: rise 0.2s ease;
+  animation: rise var(--motion-base) var(--ease-out);
 }
 .search-dialog > input {
   flex: 1;
@@ -1981,7 +2045,7 @@ main {
   background: #1c1723;
   padding: 38px;
   box-shadow: 0 25px 90px #0008;
-  animation: rise 0.25s ease;
+  animation: rise var(--motion-base) var(--ease-out);
 }
 .guide-close {
   position: absolute;
@@ -2286,7 +2350,7 @@ main {
 @media (max-width: 700px) {
   .sidebar {
     transform: translateX(-100%);
-    transition: transform 0.25s ease;
+    transition: transform var(--motion-base) var(--ease-out);
     width: 246px;
     padding: 25px 18px 0;
   }
@@ -2910,7 +2974,7 @@ main {
   border-radius: 16px;
   background: #1a1720e8;
   box-shadow: 0 25px 90px #0002;
-  animation: rise 0.4s ease;
+  animation: rise var(--motion-slow) var(--ease-out);
 }
 .auth-card-icon {
   display: grid;
@@ -3211,7 +3275,7 @@ main {
 }
 .main-shell {
   box-shadow: inset 0 3px 0 var(--space-line);
-  transition: box-shadow 0.2s;
+  transition: box-shadow var(--motion-base);
 }
 .workspace-avatar,
 .workspace-menu-avatar,
@@ -3802,7 +3866,7 @@ main.home-focus {
   inset: 0;
   border: 1px dashed #b09aeb4d;
   border-radius: 50%;
-  animation: home-orbit 24s linear infinite;
+  animation: home-orbit var(--motion-ambient) linear infinite;
 }
 .home-mark-ring::after {
   content: "";
@@ -3897,6 +3961,23 @@ main.home-focus {
   color: #968da0;
 }
 .home-item-meta.is-due { color: #e0b991; }
+/* The note that was just captured settles into the top of its list. */
+.home-item-new {
+  border-radius: 6px;
+  animation: home-item-arrive var(--motion-slow) var(--ease-orbit) both;
+}
+@keyframes home-item-arrive {
+  from {
+    opacity: 0;
+    translate: 0 -10px;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+    background: transparent;
+  }
+}
 .home-list-more { margin: 6px 8px 2px; font-size: 11px; color: var(--muted); }
 .home-list-state {
   margin: 0;
@@ -3935,7 +4016,7 @@ main.home-focus {
   border-radius: 8px;
   background: #17171c;
   font-size: 12px;
-  transition: border-color 0.2s, background 0.2s;
+  transition: border-color var(--motion-base), background var(--motion-base);
 }
 .home-bucket-link > span:first-of-type { color: #cfc9d8; }
 .home-bucket-link:hover {
@@ -3983,3 +4064,47 @@ main.home-focus {
   .home-mark-ring { animation: none; }
 }
 /* ===== End Home ===== */
+
+/* ===== Top bar on phones =====
+   Fits 320–430px: the breadcrumb shrinks and truncates, "New note" becomes an
+   icon button (its label stays as the accessible name), and every control
+   keeps a 44px touch target with room for the focus ring. */
+@media (max-width: 700px) {
+  .topbar { gap: 8px; }
+  .breadcrumb { flex: 1 1 auto; min-width: 0; gap: 6px; }
+  .workspace-switch-wrap.is-pill { flex: 0 1 auto; min-width: 0; }
+  .space-pill { position: relative; min-width: 0; max-width: 100%; }
+  .space-pill > svg { flex: none; }
+  /* Extends the 32px pill's hit area to 44px without changing its look. */
+  .space-pill::after { content: ""; position: absolute; inset: -6px -2px; }
+  .breadcrumb-current {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .topbar-right { flex: none; gap: 4px; }
+  .topbar .icon-button { width: 44px; height: 44px; }
+  .topbar-new-note { min-height: 44px; }
+}
+@media (max-width: 520px) {
+  .topbar-new-note { width: 44px; height: 44px; padding: 0; }
+  .topbar-new-note-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+}
+@media (max-width: 400px) {
+  .topbar { padding: 0 12px; }
+}
+/* The page heading already names the view; give the space pill the room. */
+@media (max-width: 359px) {
+  .breadcrumb-current { display: none; }
+}
+/* ===== End top bar on phones ===== */
