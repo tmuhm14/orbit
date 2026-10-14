@@ -105,7 +105,7 @@ test("merging server notes keeps local edits and pending deletes, and is repeata
     "Mine",
     "Not saved yet",
   ]);
-  assert.equal(first.synced.get(fromSlack.id), fromSlack.updatedAt);
+  assert.equal(first.synced.get(fromSlack.id).updatedAt, fromSlack.updatedAt);
   assert.equal(
     first.synced.has(deletedHere.id),
     true,

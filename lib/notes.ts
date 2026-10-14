@@ -67,6 +67,11 @@ export type Note = {
   origin?: NoteOrigin | null;
   /** Empty only for notes from older browser storage, before workspaces. */
   workspaceId: string;
+  /**
+   * Server-managed revision (ADR 002), as of when this copy was read. The
+   * client's synced map is the source of truth for what it last confirmed.
+   */
+  revision?: number;
 };
 export type Workspace = {
   id: string;
@@ -141,6 +146,8 @@ export function isNote(value: unknown): value is Note {
     typeof n.updatedAt === "string" &&
     (n.completedAt === null || typeof n.completedAt === "string") &&
     (n.dueDate === undefined || n.dueDate === null || isDueDate(n.dueDate)) &&
+    (n.revision === undefined ||
+      (Number.isSafeInteger(n.revision) && n.revision >= 1)) &&
     (n.source === undefined ||
       n.source === "web" ||
       n.source === "slack" ||
@@ -231,39 +238,271 @@ export const browserNotes = {
   },
 };
 
+// --- Revisions and conflicts (ADR 002) -------------------------------------
+
+/** Build number of this client's save protocol, sent as X-Orbit-Client. */
+export const NOTES_CLIENT_VERSION = 1;
+export const CLIENT_HEADER = "X-Orbit-Client";
+export const MIN_CLIENT_HEADER = "X-Orbit-Min-Client";
+
 /**
- * Combines a fresh server list with local state. `synced` maps note id to the
- * updatedAt the server last confirmed: a local note whose updatedAt differs
- * has unsaved edits (kept), and a synced id missing locally was deleted here
- * (stays deleted). Pure, so it is safe inside a React state updater.
+ * A note as sent to `PUT /api/notes`. expectedRevision: a number applies the
+ * write only at that revision, null creates only (fails if the id exists),
+ * and leaving it out is a legacy last-writer-wins write.
+ */
+export type NoteWrite = Note & { expectedRevision?: number | null };
+
+export type SaveResult =
+  | { id: string; status: "saved"; revision: number; updatedAt: string }
+  | {
+      id: string;
+      status: "conflict";
+      expectedRevision: number | null;
+      /** null: deleted elsewhere. */
+      currentRevision: number | null;
+      /** Server copy, only for the owner's browser session. */
+      current?: Note | null;
+    }
+  | { id: string; status: "precondition_required" }
+  | {
+      id: string;
+      status: "invalid";
+      code: "invalid_project_link" | "linked_item_move" | "not_found" | "invalid_note";
+    };
+
+export type SaveResponse = {
+  error?: string;
+  code?: string;
+  /** Count of saved items, kept for older clients. */
+  saved: number;
+  results: SaveResult[];
+};
+
+/** What the server last confirmed for a note. */
+export type SyncedEntry = {
+  /** Server revision, or null when the server has not reported one. */
+  revision: number | null;
+  /** The local updatedAt that was saved; a different one means unsaved edits. */
+  updatedAt: string;
+};
+export type SyncedMap = ReadonlyMap<string, SyncedEntry>;
+
+/** A note changed elsewhere while this browser also changed it. */
+export type ConflictInfo = {
+  id: string;
+  /** Revision the local edits were based on; null for a note never saved. */
+  baseRevision: number | null;
+  /** null: deleted elsewhere. */
+  currentRevision: number | null;
+  /** Server copy; null when it was deleted elsewhere. */
+  server: Note | null;
+};
+
+/** Older callers pass id → updatedAt; treat those as unknown revisions. */
+function syncedEntry(value: SyncedEntry | string | undefined) {
+  if (value === undefined) return undefined;
+  return typeof value === "string" ? { revision: null, updatedAt: value } : value;
+}
+
+/** Revision to send with a save: the synced one, or null (create-only). */
+export const expectedRevisionFor = (synced: SyncedMap, id: string) =>
+  synced.get(id)?.revision ?? null;
+
+/**
+ * Local edits and deletes not yet confirmed by the server, with the revision
+ * each was based on. Conflicted notes are left out so they are never resent
+ * automatically.
+ */
+export function pendingWrites(
+  notes: Note[],
+  synced: SyncedMap,
+  conflicted: ReadonlySet<string> = new Set(),
+) {
+  const ids = new Set(notes.map((n) => n.id));
+  return {
+    changed: notes
+      .filter(
+        (n) => !conflicted.has(n.id) && synced.get(n.id)?.updatedAt !== n.updatedAt,
+      )
+      .map(
+        (n): NoteWrite => ({ ...n, expectedRevision: expectedRevisionFor(synced, n.id) }),
+      ),
+    deleted: [...synced.keys()]
+      .filter((id) => !ids.has(id) && !conflicted.has(id))
+      .map((id) => ({ id, expectedRevision: synced.get(id)?.revision ?? null })),
+  };
+}
+
+/**
+ * Applies per-item save results. Saved items record the server revision and
+ * the updatedAt that was sent (later local edits stay dirty). Conflicts are
+ * returned for the caller to keep as drafts. `failed` is true when an item
+ * could not be saved for another reason and should be retried later.
+ */
+export function applySaveResults(
+  synced: SyncedMap,
+  sent: NoteWrite[],
+  results: SaveResult[],
+) {
+  const next = new Map(synced);
+  const sentById = new Map(sent.map((n) => [n.id, n]));
+  const conflicts: ConflictInfo[] = [];
+  let failed = false;
+  for (const result of results) {
+    const note = sentById.get(result.id);
+    if (!note) continue;
+    if (result.status === "saved")
+      next.set(result.id, { revision: result.revision, updatedAt: note.updatedAt });
+    else if (result.status === "conflict")
+      conflicts.push({
+        id: result.id,
+        baseRevision: note.expectedRevision ?? null,
+        currentRevision: result.currentRevision,
+        server: result.current ?? null,
+      });
+    else failed = true;
+  }
+  if (results.length < sent.length) failed = true;
+  return { synced: next, conflicts, failed };
+}
+
+/**
+ * Combines a fresh server list with local state. `synced` maps note id to what
+ * the server last confirmed: a local note whose updatedAt differs has unsaved
+ * edits (kept), and a synced id missing locally was deleted here (stays
+ * deleted). A note with unsaved edits whose server revision moved past the
+ * one it was based on, or that was deleted elsewhere, is reported as a
+ * conflict (local copy kept). Notes in `conflicted` are kept as they are.
+ * Pure, so it is safe inside a React state updater.
  */
 export function mergeServerNotes(
   local: Note[],
   server: Note[],
-  synced: ReadonlyMap<string, string>,
-): { notes: Note[]; synced: Map<string, string> } {
-  const nextSynced = new Map(synced);
-  const dirty = (n: Note) => synced.get(n.id) !== n.updatedAt;
+  synced: ReadonlyMap<string, SyncedEntry | string>,
+  conflicted: ReadonlySet<string> = new Set(),
+): { notes: Note[]; synced: Map<string, SyncedEntry>; conflicts: ConflictInfo[] } {
+  const known = new Map<string, SyncedEntry>();
+  for (const [id, value] of synced) known.set(id, syncedEntry(value)!);
+  const nextSynced = new Map(known);
+  const dirty = (n: Note) => known.get(n.id)?.updatedAt !== n.updatedAt;
   const localById = new Map(local.map((n) => [n.id, n]));
   const serverIds = new Set(server.map((n) => n.id));
   const notes: Note[] = [];
+  const conflicts: ConflictInfo[] = [];
+  const conflict = (id: string, remote: Note | null) =>
+    conflicts.push({
+      id,
+      baseRevision: known.get(id)?.revision ?? null,
+      currentRevision: remote?.revision ?? null,
+      server: remote,
+    });
   for (const remote of server) {
     const mine = localById.get(remote.id);
-    if (mine && dirty(mine)) notes.push(mine);
-    else if (mine || !synced.has(remote.id)) {
+    const entry = known.get(remote.id);
+    if (mine && (conflicted.has(mine.id) || dirty(mine))) {
+      notes.push(mine);
+      if (
+        conflicted.has(mine.id) ||
+        (entry?.revision != null &&
+          remote.revision != null &&
+          remote.revision > entry.revision)
+      )
+        conflict(mine.id, remote);
+    } else if (
+      mine &&
+      entry?.revision != null &&
+      entry.revision === remote.revision
+    ) {
+      // Same revision: nothing changed that the user can see. Keep the local
+      // object so an open editor is not reset.
+      notes.push(mine);
+    } else if (mine || !entry) {
       notes.push(remote);
-      nextSynced.set(remote.id, remote.updatedAt);
+      nextSynced.set(remote.id, {
+        revision: remote.revision ?? null,
+        updatedAt: remote.updatedAt,
+      });
     }
   }
   // Keep local notes the server hasn't seen yet; drop clean ones it deleted.
-  for (const mine of local)
-    if (!serverIds.has(mine.id) && (!synced.has(mine.id) || dirty(mine)))
+  // Edited notes deleted elsewhere are kept as conflicts.
+  for (const mine of local) {
+    if (serverIds.has(mine.id)) continue;
+    const entry = known.get(mine.id);
+    if (!entry) notes.push(mine);
+    else if (conflicted.has(mine.id) || dirty(mine)) {
       notes.push(mine);
+      if (conflicted.has(mine.id) || entry.revision != null) conflict(mine.id, null);
+    }
+  }
   const kept = new Set(notes.map((n) => n.id));
-  for (const id of synced.keys())
+  for (const id of known.keys())
     if (!serverIds.has(id) && !kept.has(id)) nextSynced.delete(id);
-  return { notes, synced: nextSynced };
+  return { notes, synced: nextSynced, conflicts };
 }
+
+/** Prefix for conflicted drafts: `orbit.drafts.v1:<userId>:<noteId>`. */
+export const DRAFTS_KEY = "orbit.drafts.v1";
+/** Local edits that could not be saved because of a conflict. */
+export type NoteDraft = {
+  local: Note;
+  baseRevision: number | null;
+  savedAt: string;
+};
+function isDraft(value: unknown): value is NoteDraft {
+  const d = value as NoteDraft;
+  return (
+    !!d &&
+    typeof d === "object" &&
+    isNote(d.local) &&
+    (d.baseRevision === null || Number.isSafeInteger(d.baseRevision)) &&
+    typeof d.savedAt === "string"
+  );
+}
+function storageKeys() {
+  const keys: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key) keys.push(key);
+  }
+  return keys;
+}
+/**
+ * Conflicted drafts kept in browser storage, so a reload or crash does not
+ * lose them. Removed when the conflict is resolved and on sign-out.
+ */
+export const noteDrafts = {
+  key: (userId: string, noteId: string) => `${DRAFTS_KEY}:${userId}:${noteId}`,
+  save(userId: string, draft: NoteDraft) {
+    localStorage.setItem(this.key(userId, draft.local.id), JSON.stringify(draft));
+  },
+  remove(userId: string, noteId: string) {
+    localStorage.removeItem(this.key(userId, noteId));
+  },
+  /** The account's readable drafts. Unreadable entries are left untouched. */
+  load(userId: string): NoteDraft[] {
+    const prefix = `${DRAFTS_KEY}:${userId}:`;
+    const drafts: NoteDraft[] = [];
+    for (const key of storageKeys()) {
+      if (!key.startsWith(prefix)) continue;
+      try {
+        const draft: unknown = JSON.parse(localStorage.getItem(key) ?? "null");
+        if (isDraft(draft) && key === this.key(userId, draft.local.id))
+          drafts.push(draft);
+      } catch {
+        /* Leave unreadable drafts in place. */
+      }
+    }
+    return drafts;
+  },
+  /** Removes drafts for every account except `keepUserId` (all when omitted). */
+  clear(keepUserId?: string) {
+    const keep = keepUserId && `${DRAFTS_KEY}:${keepUserId}:`;
+    for (const key of storageKeys())
+      if (key.startsWith(`${DRAFTS_KEY}:`) && !(keep && key.startsWith(keep)))
+        localStorage.removeItem(key);
+  },
+};
 
 /** Accent palette for workspaces. ink is the text color on a solid accent. */
 export const WORKSPACE_COLORS = {
