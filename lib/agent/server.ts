@@ -1,6 +1,12 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { textDoc, type BucketId, type Note } from "../notes";
+import {
+  textDoc,
+  type BucketId,
+  type ItemKind,
+  type LinkErrorCode,
+  type Note,
+} from "../notes";
 import {
   organizeTask,
   runAgent,
@@ -8,6 +14,7 @@ import {
   type AgentNoteDetail,
   type AgentStore,
   type NoteChanges,
+  type StoreRefusal,
 } from "./agent";
 import {
   ProviderError,
@@ -74,6 +81,8 @@ type NoteRow = {
   completed_at: string | null;
   triage_status: string;
   revision: number;
+  kind: ItemKind;
+  project_id: string | null;
 };
 
 /** Keeps a search term to words so it can't alter the PostgREST filter. */
@@ -83,7 +92,8 @@ const searchTerm = (query: string) =>
 type ApplyResult =
   | { status: "applied" | "unchanged"; revision: number }
   | { status: "conflict"; currentRevision: number }
-  | { status: "not_found" | "run_not_active" };
+  | { status: "not_found" | "run_not_active" | "kind_not_allowed" }
+  | { status: "invalid"; code: LinkErrorCode };
 
 /** The note values an agent change would set, from the row it was based on. */
 function changedValues(row: NoteRow, changes: NoteChanges) {
@@ -93,6 +103,8 @@ function changedValues(row: NoteRow, changes: NoteChanges) {
   };
   if (changes.title !== undefined) set("title", changes.title);
   if (changes.bucket !== undefined) set("bucket", changes.bucket);
+  if (changes.kind !== undefined) set("kind", changes.kind);
+  if (changes.projectId !== undefined) set("project_id", changes.projectId);
   if (changes.tags !== undefined) set("tags", changes.tags);
   if (changes.completed !== undefined)
     set(
@@ -137,7 +149,7 @@ export function supabaseAgentStore(
     admin
       .from("notes")
       .select(
-        "id,title,bucket,tags,source,plain_text,content,origin,created_at,completed_at,triage_status,revision",
+        "id,title,bucket,tags,source,plain_text,content,origin,created_at,completed_at,triage_status,revision,kind,project_id",
       )
       .eq("user_id", scope.userId)
       .eq("workspace_id", scope.workspaceId);
@@ -145,6 +157,8 @@ export function supabaseAgentStore(
     id: row.id,
     title: row.title,
     bucket: row.bucket,
+    kind: row.kind ?? "note",
+    projectId: row.project_id ?? null,
     tags: row.tags,
     source: row.source,
     createdAt: row.created_at,
@@ -153,6 +167,22 @@ export function supabaseAgentStore(
     text: row.plain_text,
     origin: row.origin,
   });
+  /**
+   * Links resolve only within this run's workspace (ADR 001 §3a); the
+   * composite key and trigger refuse anything else anyway.
+   */
+  const isProject = async (id: string) => {
+    const { data } = await admin
+      .from("notes")
+      .select("id")
+      .eq("user_id", scope.userId)
+      .eq("workspace_id", scope.workspaceId)
+      .eq("id", id)
+      .eq("kind", "project")
+      .maybeSingle<{ id: string }>();
+    return !!data;
+  };
+  const refuse = (refused: StoreRefusal) => ({ refused });
   const apply = async (
     row: NoteRow,
     expected: number,
@@ -173,6 +203,7 @@ export function supabaseAgentStore(
     async list(filter) {
       let query = notes();
       if (filter.bucket) query = query.eq("bucket", filter.bucket);
+      if (filter.kind) query = query.eq("kind", filter.kind);
       if (filter.tag) query = query.contains("tags", [filter.tag]);
       if (!filter.includeCompleted) query = query.is("completed_at", null);
       if (filter.pendingOnly) query = query.eq("triage_status", "pending");
@@ -201,6 +232,8 @@ export function supabaseAgentStore(
       return detail(data);
     },
     async update(id, changes: NoteChanges, reason) {
+      if (changes.projectId && !(await isProject(changes.projectId)))
+        return refuse("project_not_found");
       // First attempt: the revision the model saw (or this read, if it never
       // read the note). On a conflict, re-read once and recompute.
       let expected = seen.get(id);
@@ -224,15 +257,17 @@ export function supabaseAgentStore(
         if (result.status === "not_found") return false;
         if (result.status === "run_not_active")
           throw new Error("Agent run is no longer active");
+        // The server decides when the agent may change a kind (ADR 001 §3a).
+        if (result.status === "kind_not_allowed") return refuse("kind_not_allowed");
+        if (result.status === "invalid") return refuse(result.code);
         expected = undefined;
       }
-      // Changed again while recomputing. Nothing was written. Reported to the
-      // model as a missing note until AgentStore can return a conflict.
-      // TODO(A-01): return "That note just changed. Read it again before
-      // changing it." from executeTool (ADR 002 §4).
-      return false;
+      // Changed again while recomputing. Nothing was written (ADR 002 §4).
+      return refuse("conflict");
     },
     async create(note, reason) {
+      if (note.projectId && !(await isProject(note.projectId)))
+        return refuse("project_not_found");
       const { data, error } = await admin.rpc("agent_create_note", {
         p_run_id: scope.runId,
         p_note: {
@@ -241,13 +276,17 @@ export function supabaseAgentStore(
           plain_text: note.body,
           bucket: note.bucket,
           tags: [...new Set([...note.tags, "agent"])],
+          ...(note.kind ? { kind: note.kind } : {}),
+          ...(note.projectId ? { project_id: note.projectId } : {}),
         },
         p_reason: reason,
       });
       const result = data as
         | { status: "created"; id: string; revision: number }
+        | { status: "invalid"; code: LinkErrorCode }
         | { status: "run_not_active" }
         | null;
+      if (!error && result?.status === "invalid") return refuse(result.code);
       if (error || result?.status !== "created")
         throw new Error("Could not create note");
       seen.set(result.id, result.revision);
