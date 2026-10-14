@@ -1,8 +1,15 @@
 import "server-only";
-import { BUCKETS, isNote, type Note } from "./notes";
+import {
+  BUCKETS,
+  isNote,
+  type Note,
+  type NoteWrite,
+  type SaveResponse,
+  type SaveResult,
+} from "./notes";
 
 export const NOTE_COLUMNS =
-  "id,workspace_id,title,content,plain_text,bucket,tags,source,origin,created_at,updated_at,completed_at,due_date";
+  "id,workspace_id,title,content,plain_text,bucket,tags,source,origin,created_at,updated_at,completed_at,due_date,revision";
 
 export type NoteRow = {
   id: string;
@@ -18,6 +25,8 @@ export type NoteRow = {
   updated_at: string;
   completed_at: string | null;
   due_date: string | null;
+  /** Absent only in rows selected before revisions existed. */
+  revision?: number;
 };
 
 // Postgres returns microsecond offsets ("+00:00"); the client compares the
@@ -39,6 +48,7 @@ export function fromRow(row: NoteRow): Note {
     updatedAt: iso(row.updated_at),
     completedAt: row.completed_at && iso(row.completed_at),
     dueDate: row.due_date ?? null,
+    ...(row.revision != null ? { revision: Number(row.revision) } : {}),
   };
 }
 
@@ -80,4 +90,184 @@ export function isSavableNote(value: unknown): value is Note {
       !Number.isNaN(Date.parse(value.completedAt))) &&
     JSON.stringify(value.content).length + value.plainText.length <= MAX_CONTENT
   );
+}
+
+// --- Revision-checked writes (ADR 002) --------------------------------------
+
+/** undefined (legacy), null (create-only) or a positive revision. */
+export const isExpectedRevision = (
+  value: unknown,
+): value is number | null | undefined =>
+  value === undefined ||
+  value === null ||
+  (typeof value === "number" && Number.isSafeInteger(value) && value >= 1);
+
+/** Whether a write states its expected revision (create-only counts). */
+export const hasExpectedRevision = (note: object) =>
+  Object.hasOwn(note, "expectedRevision") &&
+  (note as { expectedRevision?: unknown }).expectedRevision !== undefined;
+
+/**
+ * One item for save_notes(). Server-owned columns (user, source, origin,
+ * triage, revision, updated_at) are never sent; the function ignores them.
+ */
+export function toSaveItem(note: NoteWrite) {
+  const { user_id: _user, updated_at: _updated, ...row } = toRow(note, "");
+  return {
+    ...row,
+    ...(hasExpectedRevision(note)
+      ? { expected_revision: note.expectedRevision }
+      : {}),
+  };
+}
+
+/** Parses ?expectedRevision=: absent, a positive integer, or invalid. */
+export function parseExpectedRevision(
+  value: string | null,
+): number | undefined | "invalid" {
+  if (value === null || value === "") return undefined;
+  if (!/^[1-9][0-9]{0,15}$/.test(value)) return "invalid";
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : "invalid";
+}
+
+type RawSaveResult = {
+  id: string;
+  status: SaveResult["status"];
+  revision?: number;
+  updatedAt?: string;
+  expectedRevision?: number | null;
+  currentRevision?: number | null;
+  current?: NoteRow | null;
+  code?: string;
+};
+
+const INVALID_CODES = new Set([
+  "invalid_project_link",
+  "linked_item_move",
+  "not_found",
+  "invalid_note",
+]);
+
+/** Maps one save_notes() item to the API shape. */
+function saveResult(raw: RawSaveResult, includeCurrent: boolean): SaveResult {
+  switch (raw.status) {
+    case "saved":
+      return {
+        id: raw.id,
+        status: "saved",
+        revision: Number(raw.revision),
+        updatedAt: iso(String(raw.updatedAt)),
+      };
+    case "conflict":
+      return {
+        id: raw.id,
+        status: "conflict",
+        expectedRevision: raw.expectedRevision ?? null,
+        currentRevision:
+          raw.currentRevision == null ? null : Number(raw.currentRevision),
+        ...(includeCurrent
+          ? { current: raw.current ? fromRow(raw.current) : null }
+          : {}),
+      };
+    case "precondition_required":
+      return { id: raw.id, status: "precondition_required" };
+    default:
+      return {
+        id: raw.id,
+        status: "invalid",
+        code: (INVALID_CODES.has(String(raw.code))
+          ? raw.code
+          : "invalid_note") as Extract<SaveResult, { status: "invalid" }>["code"],
+      };
+  }
+}
+
+/**
+ * Status and body for a batch save (ADR 002 §3). Precedence over items: any
+ * conflict → 409, else any missing precondition → 428, else any invalid →
+ * 422 with the first item's code, else 200. Messages never contain content.
+ * includeCurrent returns the server copy on conflict; only for the owner's
+ * browser session.
+ */
+export function saveResponse(
+  raw: unknown,
+  { includeCurrent }: { includeCurrent: boolean },
+): { status: number; body: SaveResponse } | null {
+  if (!Array.isArray(raw)) return null;
+  const results = (raw as RawSaveResult[]).map((r) => saveResult(r, includeCurrent));
+  const saved = results.filter((r) => r.status === "saved").length;
+  const invalid = results.find((r) => r.status === "invalid");
+  if (results.some((r) => r.status === "conflict"))
+    return {
+      status: 409,
+      body: {
+        error: "Some notes were changed elsewhere",
+        code: "revision_conflict",
+        saved,
+        results,
+      },
+    };
+  if (results.some((r) => r.status === "precondition_required"))
+    return {
+      status: 428,
+      body: {
+        error: "Reload to keep saving",
+        code: "precondition_required",
+        saved,
+        results,
+      },
+    };
+  if (invalid)
+    return {
+      status: 422,
+      body: { error: "Some notes could not be saved", code: invalid.code, saved, results },
+    };
+  return { status: 200, body: { saved, results } };
+}
+
+type RawDeleteResult = {
+  status: "deleted" | "not_found" | "conflict" | "precondition_required";
+  currentRevision?: number;
+  current?: NoteRow;
+};
+
+/**
+ * Status and body for a conditional delete. A legacy delete (no expected
+ * revision) of a note that is already gone still answers 200, as before, so
+ * older tabs do not retry it forever.
+ */
+export function deleteResponse(
+  raw: unknown,
+  id: string,
+  { includeCurrent, legacy }: { includeCurrent: boolean; legacy: boolean },
+): { status: number; body: Record<string, unknown> } | null {
+  const result = raw as RawDeleteResult | null;
+  switch (result?.status) {
+    case "deleted":
+      return { status: 200, body: { deleted: id } };
+    case "not_found":
+      return legacy
+        ? { status: 200, body: { deleted: id } }
+        : { status: 404, body: { error: "Note not found", code: "not_found" } };
+    case "conflict":
+      return {
+        status: 409,
+        body: {
+          error: "This note was changed elsewhere and was not deleted",
+          code: "revision_conflict",
+          currentRevision: Number(result.currentRevision),
+          ...(includeCurrent && result.current
+            ? { current: fromRow(result.current) }
+            : {}),
+        },
+      };
+    case "precondition_required":
+      return {
+        status: 428,
+        body: { error: "Reload to keep saving", code: "precondition_required" },
+      };
+    default:
+      return null;
+  }
 }

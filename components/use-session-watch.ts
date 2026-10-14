@@ -28,7 +28,7 @@ export function useSessionWatch(userId: string) {
     function onVisible() {
       if (!document.hidden) void checkSession();
     }
-    announceAuthChange();
+    announceAuthChange(userId);
     const interval = setInterval(checkSession, 60000);
     window.addEventListener("storage", onStorage);
     window.addEventListener("focus", onVisible);

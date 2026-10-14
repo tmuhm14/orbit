@@ -73,45 +73,74 @@ type NoteRow = {
   created_at: string;
   completed_at: string | null;
   triage_status: string;
+  revision: number;
 };
 
 /** Keeps a search term to words so it can't alter the PostgREST filter. */
 const searchTerm = (query: string) =>
   query.replace(/[^\p{L}\p{N}\s'-]/gu, " ").replace(/\s+/g, " ").trim();
 
+type ApplyResult =
+  | { status: "applied" | "unchanged"; revision: number }
+  | { status: "conflict"; currentRevision: number }
+  | { status: "not_found" | "run_not_active" };
+
+/** The note values an agent change would set, from the row it was based on. */
+function changedValues(row: NoteRow, changes: NoteChanges) {
+  const after: Record<string, unknown> = {};
+  const set = (column: keyof NoteRow, value: unknown) => {
+    if (JSON.stringify(row[column]) !== JSON.stringify(value)) after[column] = value;
+  };
+  if (changes.title !== undefined) set("title", changes.title);
+  if (changes.bucket !== undefined) set("bucket", changes.bucket);
+  if (changes.tags !== undefined) set("tags", changes.tags);
+  if (changes.completed !== undefined)
+    set(
+      "completed_at",
+      changes.completed ? (row.completed_at ?? new Date().toISOString()) : null,
+    );
+  if (changes.appendText) {
+    set("content", {
+      ...row.content,
+      content: [
+        ...(row.content.content ?? []),
+        ...(textDoc(changes.appendText).content ?? []),
+      ],
+    });
+    set(
+      "plain_text",
+      row.plain_text
+        ? `${row.plain_text}\n${changes.appendText}`
+        : changes.appendText,
+    );
+  }
+  if (row.triage_status === "pending") set("triage_status", "done");
+  return after;
+}
+
 /**
  * Notes for one user and workspace, through the admin client (capture runs
- * have no browser session). Every query filters on both ids, and every change
- * is recorded in agent_actions with the values it replaced.
+ * have no browser session). Reads filter on both ids. Writes go through
+ * agent_apply_note_change / agent_create_note, which take the user and
+ * workspace from the run row and record each change in agent_actions in the
+ * same transaction (ADR 002 §4). A change applies only at the revision the
+ * agent last read; on a conflict the store re-reads once and recomputes.
+ * Revisions are never shown to the model.
  */
 export function supabaseAgentStore(
   admin: SupabaseClient,
   scope: { userId: string; workspaceId: string; runId: string },
 ): AgentStore {
+  // Revision of each note as the model last saw it in this run.
+  const seen = new Map<string, number>();
   const notes = () =>
     admin
       .from("notes")
       .select(
-        "id,title,bucket,tags,source,plain_text,content,origin,created_at,completed_at,triage_status",
+        "id,title,bucket,tags,source,plain_text,content,origin,created_at,completed_at,triage_status,revision",
       )
       .eq("user_id", scope.userId)
       .eq("workspace_id", scope.workspaceId);
-  const record = (
-    noteId: string,
-    kind: "update" | "create",
-    before: Record<string, unknown> | null,
-    after: Record<string, unknown>,
-    reason: string,
-  ) =>
-    admin.from("agent_actions").insert({
-      run_id: scope.runId,
-      user_id: scope.userId,
-      note_id: noteId,
-      kind,
-      before,
-      after,
-      reason: reason || null,
-    });
   const detail = (row: NoteRow): AgentNoteDetail => ({
     id: row.id,
     title: row.title,
@@ -124,6 +153,22 @@ export function supabaseAgentStore(
     text: row.plain_text,
     origin: row.origin,
   });
+  const apply = async (
+    row: NoteRow,
+    expected: number,
+    after: Record<string, unknown>,
+    reason: string,
+  ) => {
+    const { data, error } = await admin.rpc("agent_apply_note_change", {
+      p_run_id: scope.runId,
+      p_note_id: row.id,
+      p_expected_revision: expected,
+      p_after: after,
+      p_reason: reason,
+    });
+    if (error || !data) throw new Error("Could not update note");
+    return data as ApplyResult;
+  };
   return {
     async list(filter) {
       let query = notes();
@@ -139,87 +184,74 @@ export function supabaseAgentStore(
         .limit(filter.limit)
         .returns<NoteRow[]>();
       if (error) throw new Error("Could not list notes");
-      return data.map(({ plain_text, ...row }) => {
+      return data.map(({ plain_text, revision, ...row }) => {
+        seen.set(row.id, revision);
         const { text: _text, origin: _origin, ...summary } = detail({
           ...row,
           plain_text,
+          revision,
         });
         return { ...summary, snippet: plain_text.slice(0, 240) };
       });
     },
     async get(id) {
       const { data } = await notes().eq("id", id).maybeSingle<NoteRow>();
-      return data ? detail(data) : null;
+      if (!data) return null;
+      seen.set(data.id, data.revision);
+      return detail(data);
     },
     async update(id, changes: NoteChanges, reason) {
-      const { data: row } = await notes().eq("id", id).maybeSingle<NoteRow>();
-      if (!row) return false;
-      const before: Record<string, unknown> = {};
-      const after: Record<string, unknown> = {};
-      const set = (column: keyof NoteRow, value: unknown) => {
-        if (JSON.stringify(row[column]) === JSON.stringify(value)) return;
-        before[column] = row[column];
-        after[column] = value;
-      };
-      if (changes.title !== undefined) set("title", changes.title);
-      if (changes.bucket !== undefined) set("bucket", changes.bucket);
-      if (changes.tags !== undefined) set("tags", changes.tags);
-      if (changes.completed !== undefined)
-        set(
-          "completed_at",
-          changes.completed
-            ? (row.completed_at ?? new Date().toISOString())
-            : null,
-        );
-      if (changes.appendText) {
-        set("content", {
-          ...row.content,
-          content: [
-            ...(row.content.content ?? []),
-            ...(textDoc(changes.appendText).content ?? []),
-          ],
-        });
-        set(
-          "plain_text",
-          row.plain_text
-            ? `${row.plain_text}\n${changes.appendText}`
-            : changes.appendText,
-        );
+      // First attempt: the revision the model saw (or this read, if it never
+      // read the note). On a conflict, re-read once and recompute.
+      let expected = seen.get(id);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const { data: row } = await notes().eq("id", id).maybeSingle<NoteRow>();
+        if (!row) return false;
+        const base = expected ?? row.revision;
+        const after = changedValues(row, changes);
+        if (!Object.keys(after).length) {
+          seen.set(id, row.revision);
+          return true;
+        }
+        const result =
+          base === row.revision
+            ? await apply(row, base, after, reason)
+            : ({ status: "conflict", currentRevision: row.revision } as const);
+        if (result.status === "applied" || result.status === "unchanged") {
+          seen.set(id, result.revision);
+          return true;
+        }
+        if (result.status === "not_found") return false;
+        if (result.status === "run_not_active")
+          throw new Error("Agent run is no longer active");
+        expected = undefined;
       }
-      if (row.triage_status === "pending") set("triage_status", "done");
-      if (!Object.keys(after).length) return true;
-      const { error } = await admin
-        .from("notes")
-        .update({ ...after, updated_at: new Date().toISOString() })
-        .eq("id", id)
-        .eq("user_id", scope.userId)
-        .eq("workspace_id", scope.workspaceId);
-      if (error) throw new Error("Could not update note");
-      await record(id, "update", before, after, reason);
-      return true;
+      // Changed again while recomputing. Nothing was written. Reported to the
+      // model as a missing note until AgentStore can return a conflict.
+      // TODO(A-01): return "That note just changed. Read it again before
+      // changing it." from executeTool (ADR 002 §4).
+      return false;
     },
     async create(note, reason) {
-      const id = crypto.randomUUID();
-      const now = new Date().toISOString();
-      const doc = textDoc(note.body);
-      const row = {
-        title: note.title,
-        content: doc,
-        plain_text: note.body,
-        bucket: note.bucket,
-        tags: [...new Set([...note.tags, "agent"])],
-      };
-      const { error } = await admin.from("notes").insert({
-        id,
-        user_id: scope.userId,
-        workspace_id: scope.workspaceId,
-        ...row,
-        created_at: now,
-        updated_at: now,
+      const { data, error } = await admin.rpc("agent_create_note", {
+        p_run_id: scope.runId,
+        p_note: {
+          title: note.title,
+          content: textDoc(note.body),
+          plain_text: note.body,
+          bucket: note.bucket,
+          tags: [...new Set([...note.tags, "agent"])],
+        },
+        p_reason: reason,
       });
-      if (error) throw new Error("Could not create note");
-      await record(id, "create", null, row, reason);
-      return id;
+      const result = data as
+        | { status: "created"; id: string; revision: number }
+        | { status: "run_not_active" }
+        | null;
+      if (error || result?.status !== "created")
+        throw new Error("Could not create note");
+      seen.set(result.id, result.revision);
+      return result.id;
     },
   };
 }
