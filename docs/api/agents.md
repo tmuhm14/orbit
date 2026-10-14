@@ -12,7 +12,7 @@ Base URL: your deployed Orbit origin, or `http://localhost:3000` locally. Use HT
 
 - `GET /api/v1/workspaces`: returns `{workspaces: [{id, name, color}]}` for enabled workspaces. Does not return email inbox secrets.
 - `GET /api/v1/notes?workspaceId=<uuid>&limit=50&offset=0`: returns `{notes, limit, offset}`. Limit is 1–100; offset is 0–100000. Notes use database field names (`workspace_id`, `plain_text`, `created_at`, `updated_at`, `completed_at`). Fetch pages until fewer than `limit` notes return. Concurrent edits can shift offset pages.
-- `POST /api/v1/notes`: JSON `{ "workspaceId": "<uuid>", "title": "Follow up", "text": "Call the vendor" }`. Creates an Inbox note and returns `{id, workspaceId, bucket}` with status 201. Title is required, up to 2000 characters; text is required, up to 50000 characters. Unknown fields are rejected. Each call creates a new note; do not automatically retry an ambiguous timeout.
+- `POST /api/v1/notes`: JSON `{ "workspaceId": "<uuid>", "title": "Follow up", "text": "Call the vendor" }`. Creates an Inbox note and returns `{id, workspaceId, bucket, revision}` with status 201 (`revision` is 1 for a new note; listed notes also include their current `revision`). Title is required, up to 2000 characters; text is required, up to 50000 characters. Unknown fields are rejected. Each call creates a new note; do not automatically retry an ambiguous timeout.
 
 Errors return `{error: string}`: 400 invalid input, 401 missing/expired token, 403 unavailable/disabled workspace, 413 oversized body, 500 storage failure, 503 missing server configuration. Responses are private and uncached. There is no delete or update API in this version.
 

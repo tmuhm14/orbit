@@ -23,7 +23,7 @@ export async function GET(request: Request) {
   const denied = await allowed(auth, workspaceId);
   if (denied) return denied;
   const { data, error } = await auth.supabase.from("notes")
-    .select("id,workspace_id,title,plain_text,bucket,tags,created_at,updated_at,completed_at")
+    .select("id,workspace_id,title,plain_text,bucket,tags,created_at,updated_at,completed_at,revision")
     .eq("user_id", auth.user.id).eq("workspace_id", workspaceId)
     .order("updated_at", { ascending: false }).order("id").range(offset, offset + limit - 1);
   if (error) return reply({ error: "Could not load notes" }, 500);
@@ -54,7 +54,10 @@ export async function POST(request: Request) {
   const note = createNote(body.title.trim(), "inbox", body.workspaceId);
   note.plainText = body.text;
   note.content = textDoc(body.text);
+  // Create-only: a fresh id, and the revision trigger starts every insert at 1.
+  // Before direct writes are revoked (ADR 002 phase C′) this moves to
+  // save_notes() with expected_revision null.
   const { error } = await auth.supabase.from("notes").insert(toRow(note, auth.user.id));
   if (error) return reply({ error: "Could not capture note" }, 500);
-  return reply({ id: note.id, workspaceId: note.workspaceId, bucket: note.bucket }, 201);
+  return reply({ id: note.id, workspaceId: note.workspaceId, bucket: note.bucket, revision: 1 }, 201);
 }

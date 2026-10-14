@@ -189,7 +189,7 @@
         "summary": "Capture an Inbox note",
         "responses": {
           "201": {
-            "description": "Success",
+            "description": "Created. Returns id, workspaceId, bucket and revision (always 1 for a new note).",
             "content": {
               "application/json": {
                 "schema": {
