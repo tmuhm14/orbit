@@ -3713,15 +3713,7 @@ main {
   }
 }
 
-/* A compact deadline rail alongside the home workspace. */
-main.home-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 264px;
-  gap: 28px;
-  align-items: start;
-  max-width: 1600px;
-  padding-inline: 32px;
-}
+/* A compact deadline rail alongside Home (layout lives in the Home section below). */
 .home-primary { min-width: 0; }
 .due-panel {
   position: sticky;
@@ -3761,17 +3753,233 @@ main.home-layout {
 .note-properties > label { align-self: center; font-size: 13px; color: var(--muted); }
 .note-due-date { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .note-due-date input { color-scheme: dark; min-width: 0; padding: 6px 8px; border: 1px solid #ffffff14; border-radius: 6px; background: #ffffff04; color: #c8bad8; font: inherit; font-size: 12px; }
-@media (min-width: 1101px) and (max-width: 1450px) {
-  .home-layout .bucket-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .home-layout .welcome-compact .orbital-art { display: none; }
-  .home-layout .welcome-compact .welcome-copy { max-width: 100%; }
-  .home-layout .capture-bottom > span, .home-layout .capture-shortcut { display: none; }
-  .home-layout .capture-bottom { justify-content: flex-end; }
+
+/* ===== Home (U-01): capture, what needs attention, due/next/waiting ===== */
+main.home-focus {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 272px;
+  gap: 28px;
+  align-items: start;
+  max-width: 1600px;
+  padding-inline: 32px;
 }
+.home-notices:empty { display: none; }
+.home-notices { display: grid; gap: 10px; padding-top: 20px; }
+.home-due .due-panel { margin-top: 24px; }
+.home-due .due-note > span { color: #968da0; }
+
+.home-header {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 26px 0 20px;
+}
+.home-header h1 {
+  font-family: "Manrope", sans-serif;
+  font-weight: 500;
+  font-size: clamp(22px, 2vw, 28px);
+  line-height: 1.25;
+  letter-spacing: -0.8px;
+  margin: 7px 0 6px;
+  text-wrap: balance;
+}
+.home-header h1 > span { color: #b9a3df; }
+.home-header .eyebrow { font-size: 9px; letter-spacing: 1.6px; }
+.home-summary { margin: 0; font-size: 13px; color: #a69db2; }
+.home-mark {
+  position: relative;
+  flex: none;
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #c7b5ec;
+  background: radial-gradient(circle, #b09aeb26, transparent 70%);
+}
+.home-mark-ring {
+  position: absolute;
+  inset: 0;
+  border: 1px dashed #b09aeb4d;
+  border-radius: 50%;
+  animation: home-orbit 24s linear infinite;
+}
+.home-mark-ring::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #d0b185;
+  box-shadow: 0 0 8px #d0b18599;
+}
+@keyframes home-orbit { to { rotate: 360deg; } }
+
+.home-inbox, .home-lists { margin-top: 22px; }
+.home-lists {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.home-list {
+  min-width: 0;
+  padding: 16px 16px 12px;
+  border: 1px solid #ffffff0d;
+  border-radius: 10px;
+  background: linear-gradient(140deg, color-mix(in srgb, var(--accent) 5%, #17171c), #17171c 85%);
+  color: var(--text);
+}
+.home-list-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  margin-bottom: 8px;
+}
+.home-list-heading > div { flex: 1; min-width: 0; }
+.home-list-icon {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.home-list-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+}
+.home-list-count {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 5px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.home-list-heading p { margin: 3px 0 0; font-size: 11px; color: var(--muted); }
+.home-view-all { flex: none; color: #a69db2; min-height: 32px; }
+.home-view-all:hover { color: var(--accent); }
+.home-list-items { margin: 0; padding: 0; list-style: none; }
+.home-list-items li + li { border-top: 1px solid #ffffff09; }
+.home-item {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 8px;
+  text-align: left;
+  border-radius: 6px;
+  color: var(--text);
+}
+.home-item:hover { background: #ffffff06; }
+.home-item strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 450;
+  color: #dcd7e3;
+}
+.home-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: #968da0;
+}
+.home-item-meta.is-due { color: #e0b991; }
+.home-list-more { margin: 6px 8px 2px; font-size: 11px; color: var(--muted); }
+.home-list-state {
+  margin: 0;
+  padding: 10px 8px 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #a69db2;
+}
+.home-list-state strong { display: block; color: #cfc6da; font-weight: 500; }
+.home-list-state p { margin: 2px 0 0; }
+
+.home-buckets { margin-top: 30px; }
+.home-buckets-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.home-buckets-heading h2 { margin: 0; font-size: 13px; font-weight: 500; color: #b8b0c3; }
+.home-buckets ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.home-bucket-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid #ffffff0f;
+  border-radius: 8px;
+  background: #17171c;
+  font-size: 12px;
+  transition: border-color 0.2s, background 0.2s;
+}
+.home-bucket-link > span:first-of-type { color: #cfc9d8; }
+.home-bucket-link:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent) 6%, #17171c);
+}
+.home-bucket-count { color: #968da0; font-variant-numeric: tabular-nums; }
+
+/* Wide-but-not-huge desktops: give capture room next to the rail. */
+@media (min-width: 1101px) and (max-width: 1450px) {
+  .home-focus .capture-bottom > span, .home-focus .capture-shortcut { display: none; }
+  .home-focus .capture-bottom { justify-content: flex-end; }
+}
+/* One column: dissolve the primary column so the due panel sits after Inbox. */
 @media (max-width: 1100px) {
-  main.home-layout { grid-template-columns: minmax(0, 1fr); padding-inline: 25px; gap: 0; }
-  .due-panel { position: static; max-height: none; margin: 0 0 28px; }
+  main.home-focus {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    padding-inline: 25px;
+  }
+  .home-focus .home-primary { display: contents; }
+  .home-notices { order: 0; }
+  .home-header { order: 1; }
+  .home-capture { order: 2; }
+  .home-inbox { order: 3; }
+  .home-due { order: 4; }
+  .home-lists { order: 5; }
+  .home-buckets { order: 6; }
+  .home-focus .workspace-footer { order: 7; }
+  .home-due .due-panel { position: static; max-height: none; margin: 22px 0 0; }
 }
 @media (max-width: 700px) {
-  main.home-layout { padding-inline: 22px; }
+  main.home-focus { padding-inline: 18px; }
+  .home-lists { grid-template-columns: minmax(0, 1fr); }
+  .home-header { padding-top: 20px; gap: 14px; }
+  .home-mark { width: 42px; height: 42px; }
 }
+@media (max-width: 500px) {
+  .home-focus .capture-bottom > span { display: none; }
+  .home-focus .capture-bottom { justify-content: flex-end; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-mark-ring { animation: none; }
+}
+/* ===== End Home ===== */
