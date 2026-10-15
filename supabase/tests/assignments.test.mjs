@@ -509,15 +509,105 @@ test("artifacts persist after cancel; deleting items detaches them", { skip }, a
   assert.equal((await one("select count(*) c from public.assignment_artifacts where id = $1", [artifactId])).c, 1);
 });
 
-test("an item referenced by an assignment can't move to another workspace", { skip }, async () => {
-  const src = await note(A, WA);
-  await create(A, WA, src);
-  const [r] = (await as(db, "authenticated", A, "select public.save_notes($1::jsonb, false) r", [JSON.stringify([{
-    id: src, workspace_id: WA2, title: "Captured text", content: { type: "doc" }, plain_text: "", bucket: "next", tags: [],
-    completed_at: null, expected_revision: 1,
-  }])]))[0].r;
-  assert.deepEqual([r.status, r.code], ["invalid", "invalid_note"]);
-  assert.equal((await one("select workspace_id from public.notes where id = $1", [src])).workspace_id, WA);
+// Workspace moves (decided by Tony, 2026-10-14): refused while an active
+// assignment references the item; finished assignments detach instead.
+const move = async (id, ws) => {
+  const current = await one("select revision, title, bucket from public.notes where id = $1", [id]);
+  return (await as(db, "authenticated", A, "select public.save_notes($1::jsonb, false) r", [JSON.stringify([{
+    id, workspace_id: ws, title: current.title, content: { type: "doc" }, plain_text: "", bucket: current.bucket, tags: [],
+    completed_at: null, expected_revision: Number(current.revision),
+  }])]))[0].r[0];
+};
+const wsOf = async (id) => (await one("select workspace_id from public.notes where id = $1", [id])).workspace_id;
+
+test("moving an item used by an active assignment is refused, as source or context", { skip }, async () => {
+  const ws = await newWs();
+  const to = await newWs();
+  const src = await note(A, ws);
+  const ctx = await note(A, ws, "note");
+  const a = (await create(A, ws, src, { context: [ctx] })).assignment;
+  const states = [];
+  const check = async (label) => {
+    for (const id of [src, ctx]) {
+      const r = await move(id, to);
+      assert.deepEqual([r.status, r.code], ["invalid", "invalid_note"], `${label}: save_notes`);
+      assert.equal(await wsOf(id), ws);
+      await assert.rejects(as(db, "authenticated", A, "update public.notes set workspace_id = $1 where id = $2", [to, id]),
+        /assignment_active/, `${label}: direct update`);
+    }
+    states.push((await row(a.id)).state);
+  };
+  await check("queued");
+  const lease = await claim(a.id);
+  await check("running");
+  const asked = await ask(lease);
+  await check("needs_input");
+  await answer(A, a.id, asked.questionId);
+  await submit(await claim(a.id));
+  await check("needs_review");
+  assert.deepEqual(states, ["queued", "running", "needs_input", "needs_review"]);
+  const r = await row(a.id);
+  assert.equal(r.source_note_id, src, "nothing was detached");
+  assert.equal((await one("select note_id from public.assignment_context_items where assignment_id = $1", [a.id])).note_id, ctx);
+  // A finished assignment on the same item does not unblock it.
+  const other = await note(A, ws, "note");
+  const done = (await create(A, ws, other, { context: [ctx] })).assignment;
+  await cancel(A, done.id);
+  assert.equal((await move(ctx, to)).code, "invalid_note");
+  assert.equal((await one("select note_id from public.assignment_context_items where assignment_id = $1", [done.id])).note_id, ctx,
+    "a refused move detaches nothing");
+});
+
+test("after completing, canceling or failing, the move succeeds and the assignment detaches", { skip }, async () => {
+  const finish = {
+    completed: async (a) => { const lease = await claim(a.id); const s = await submit(lease); await review(A, a.id, s.artifactId, "accept"); },
+    canceled: async (a) => { const lease = await claim(a.id); const s = await submit(lease);
+      await review(A, a.id, s.artifactId, "request_changes", "More"); await cancel(A, a.id); },
+    failed: async (a) => { const lease = await claim(a.id); await ask(lease).then(({ questionId }) => answer(A, a.id, questionId));
+      await fail(await claim(a.id)); },
+  };
+  for (const [state, run] of Object.entries(finish)) {
+    const ws = await newWs();
+    const to = await newWs();
+    const src = await note(A, ws);
+    const ctx = await note(A, ws, "note");
+    const kept = await note(A, ws, "note");
+    const a = (await create(A, ws, src, { context: [ctx, kept] })).assignment;
+    await run(a);
+    const before = await row(a.id);
+    assert.equal(before.state, state);
+    const counts = async () => (await q(`select
+      (select count(*)::int from public.assignment_events where assignment_id = $1) events,
+      (select count(*)::int from public.assignment_artifacts where assignment_id = $1) artifacts,
+      (select count(*)::int from public.assignment_attempts where assignment_id = $1) attempts,
+      (select count(*)::int from public.assignment_questions where assignment_id = $1) questions,
+      (select count(*)::int from public.assignment_reviews where assignment_id = $1) reviews`, [a.id]))[0];
+    const had = await counts();
+
+    assert.equal((await move(src, to)).status, "saved", `${state}: source moves`);
+    assert.equal((await move(ctx, to)).status, "saved", `${state}: context moves`);
+    assert.deepEqual([await wsOf(src), await wsOf(ctx)], [to, to]);
+
+    const after = await row(a.id);
+    assert.deepEqual([after.state, after.source_note_id, after.requested_outcome, after.error_code, after.workspace_id],
+      [state, null, before.requested_outcome, before.error_code, ws], `${state}: detached, history kept`);
+    assert.equal(Number(after.revision), Number(before.revision) + 1);
+    const context = await q("select note_id, position, revision_at_selection from public.assignment_context_items where assignment_id = $1 order by position", [a.id]);
+    assert.deepEqual(context.map((c) => [c.note_id, c.position, Number(c.revision_at_selection)]), [[null, 1, 1], [kept, 2, 1]],
+      `${state}: context row kept without its link; other context untouched`);
+    const now = await counts();
+    assert.deepEqual(now, { ...had, events: had.events + 2 }, `${state}: artifacts and history kept`);
+    const detached = (await events(a.id)).filter((e) => e.type === "item_detached");
+    assert.deepEqual(detached.map((e) => [e.actor, e.payload]),
+      [["system", { noteId: src, role: "source" }], ["system", { noteId: ctx, role: "context" }]]);
+    // The owner can still read the whole detail through RLS.
+    for (const table of TABLES.slice(1))
+      assert.equal((await as(db, "authenticated", A, `select 1 from public.${table} where assignment_id = $1`, [a.id])).length,
+        table === "assignment_events" ? now.events : table === "assignment_context_items" ? 2
+          : now[table.replace("assignment_", "")], `${state}: ${table}`);
+    // The moved item can be delegated again in its new workspace.
+    assert.equal((await create(A, to, src, { context: [ctx] })).status, "created");
+  }
 });
 
 // --- RLS, grants, append-only ---------------------------------------------------------------

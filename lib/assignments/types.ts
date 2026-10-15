@@ -53,7 +53,9 @@ export type AssignmentEventType =
   | "artifact_submitted"
   | "review_decided"
   | "cancel_requested"
-  | "context_unavailable";
+  | "context_unavailable"
+  /** A finished assignment lost its link to an item that moved workspace. */
+  | "item_detached";
 
 export type AssignmentEvent = {
   id: string;

@@ -4,12 +4,21 @@
 -- so it is safe to apply while the previous app version is live; nothing
 -- reads these tables until the assignment routes ship.
 --
--- Consequences for existing writers (no code change, enforced by foreign
--- keys on the new tables): an item that is the source or a selected context
--- item of any assignment cannot move to another workspace (save_notes returns
--- its per-item `invalid_note` result), because the composite keys are
--- `on update restrict` (ADR 003 §1). Deleting such an item is allowed; the
--- reference becomes null and the assignment is kept.
+-- Consequences for existing writers (no code change; one new trigger on
+-- notes that fires only when workspace_id changes; decided by Tony,
+-- 2026-10-14):
+-- - An item that is the source or a selected context item of an active
+--   assignment (queued, running, needs_input, needs_review) can't move to
+--   another workspace: the trigger raises `assignment_active`, which
+--   save_notes reports as its existing per-item `invalid_note` result.
+-- - Moving an item referenced only by finished assignments (completed,
+--   failed, canceled) succeeds. Those assignments detach from it first:
+--   source_note_id and the context row's note_id become null; the assignment,
+--   its outcome, context rows (position, revision at selection), attempts,
+--   events, questions, artifacts and reviews are kept, and an `item_detached`
+--   event is appended.
+-- - Deleting an item is allowed either way; the reference becomes null.
+-- The composite keys stay `on update restrict` as a backstop.
 --
 -- Rules:
 -- - Every row carries user_id and workspace_id, tied by composite foreign keys
@@ -192,7 +201,7 @@ create table public.assignment_events (
   workspace_id uuid not null,
   type text not null check (type in ('state_changed', 'progress', 'question_asked',
     'question_answered', 'artifact_submitted', 'review_decided', 'cancel_requested',
-    'context_unavailable')),
+    'context_unavailable', 'item_detached')),
   actor text not null check (actor in ('user', 'executor', 'system')),
   from_state text,
   to_state text,
@@ -573,6 +582,10 @@ begin
   if not found then
     return jsonb_build_object('status', 'not_found');
   end if;
+  -- Locks the context items too, so none can move workspace mid-create.
+  perform 1 from public.notes n
+    where n.id = any (v_context) and n.user_id = v_uid and n.workspace_id = p_workspace_id
+    for share;
   select count(*) into v_found from public.notes n
     where n.id = any (v_context) and n.user_id = v_uid and n.workspace_id = p_workspace_id;
   if v_found <> cardinality(v_context) or v_source.id = any (v_context) then
@@ -1009,6 +1022,56 @@ begin
   v_row := public.assignment_move(v_row.id, 'failed', 'system', p_error_code);
   return jsonb_build_object('status', 'saved', 'assignment', public.assignment_json(v_row));
 end $$;
+
+-- Workspace moves of referenced items. ------------------------------------------
+
+-- Before an item's workspace_id changes (any writer: save_notes, the agent
+-- functions, direct updates): refuse while an active assignment uses it as
+-- its source or context (check_violation `assignment_active`; save_notes
+-- returns `invalid_note` for it), otherwise detach finished assignments from
+-- it so the composite keys stay valid. Detaching keeps every row, sets the
+-- reference to null and appends an `item_detached` event. Security definer
+-- because the writer has no rights on the assignment tables.
+create function public.notes_detach_finished_assignments() returns trigger
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_row public.assignments;
+begin
+  if exists (
+    select 1 from public.assignments a
+    where a.user_id = old.user_id and a.source_note_id = old.id
+      and a.state in ('queued', 'running', 'needs_input', 'needs_review')
+    union all
+    select 1 from public.assignment_context_items c
+    join public.assignments a on a.id = c.assignment_id
+    where c.user_id = old.user_id and c.note_id = old.id
+      and a.state in ('queued', 'running', 'needs_input', 'needs_review')) then
+    raise exception 'assignment_active' using errcode = '23514';
+  end if;
+  for v_row in
+    update public.assignments set source_note_id = null
+    where user_id = old.user_id and source_note_id = old.id
+    returning *
+  loop
+    perform public.assignment_event(v_row, 'item_detached', 'system',
+      jsonb_build_object('noteId', old.id, 'role', 'source'));
+  end loop;
+  for v_row in
+    select a.* from public.assignments a
+    where a.id in (select c.assignment_id from public.assignment_context_items c
+                   where c.user_id = old.user_id and c.note_id = old.id)
+  loop
+    update public.assignment_context_items set note_id = null
+    where assignment_id = v_row.id and note_id = old.id;
+    perform public.assignment_event(v_row, 'item_detached', 'system',
+      jsonb_build_object('noteId', old.id, 'role', 'context'));
+  end loop;
+  return new;
+end $$;
+revoke execute on function public.notes_detach_finished_assignments() from public, anon, authenticated, service_role;
+create trigger notes_detach_finished_assignments before update of workspace_id on public.notes
+  for each row when (old.workspace_id is distinct from new.workspace_id)
+  execute function public.notes_detach_finished_assignments();
 
 -- Reaper. ------------------------------------------------------------------------
 
