@@ -22,7 +22,16 @@ const admin = {
     return q;
   },
 };
+// Recovery of queued built-in assignments (A-02) runs after the response.
+let afterCallbacks = [];
+let recoveries = [];
+let recoverResult = async () => ({ started: 0 });
 const route = loadTs(new URL("./route.ts", import.meta.url), {
+  "next/server": { after: (callback) => afterCallbacks.push(callback) },
+  "@/lib/assignments/executor-server": {
+    recoverQueuedAssignments: async (client, options) => (recoveries.push([client, options]), recoverResult()),
+    routeDeadline: (startedAt) => startedAt + 270_000,
+  },
   "@/lib/supabase/admin": { createAdminClient: () => admin },
   "@/lib/scheduled/schedule": { dueReportDate: () => null },
   "@/lib/scheduled/server": { runScheduledTask: async () => null },
@@ -77,4 +86,31 @@ test("a failed reap does not stop the tick and logs no detail", async () => {
     console.error = original;
   }
   assert.deepEqual(errors, [["assignment lease reap failed"]]);
+});
+
+test("every tick starts recovery of queued built-in assignments after the response", async () => {
+  afterCallbacks = [];
+  recoveries = [];
+  const before = Date.now();
+  assert.equal((await tick("07")).status, 200);
+  assert.equal(recoveries.length, 0, "nothing runs before the response");
+  for (const callback of afterCallbacks.splice(0)) await callback();
+  assert.equal(recoveries.length, 1);
+  assert.equal(recoveries[0][0], admin);
+  assert.ok(recoveries[0][1].deadlineAt >= before + 270_000);
+  // A failing sweep logs a fixed line only; unauthorized ticks schedule nothing.
+  recoverResult = async () => { throw new Error("boom: secret"); };
+  const errors = [];
+  const original = console.error;
+  console.error = (...args) => errors.push(args);
+  try {
+    await tick("08");
+    for (const callback of afterCallbacks.splice(0)) await callback();
+  } finally {
+    console.error = original;
+    recoverResult = async () => ({ started: 0 });
+  }
+  assert.deepEqual(errors, [["assignment recovery failed"]]);
+  await tick("08", "wrong");
+  assert.equal(afterCallbacks.length, 0);
 });

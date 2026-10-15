@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import { routeUser } from "@/lib/supabase/route-auth";
 import { isAssignmentUuid, parseReview } from "@/lib/assignments/validation";
 import {
@@ -6,6 +7,15 @@ import {
   authFailure,
   readJsonBody,
 } from "@/lib/assignments/server";
+import {
+  queuedBuiltinAssignmentId,
+  routeDeadline,
+  runQueuedAssignment,
+} from "@/lib/assignments/executor-server";
+
+// A built-in run queued here continues after the response, up to this limit
+// (ADR 005 tier 2; EXECUTOR_ROUTE_MAX_DURATION in executor-server.ts).
+export const maxDuration = 300;
 
 /**
  * Reviews the latest result: accept → completed (T11), request_changes →
@@ -33,5 +43,10 @@ export async function POST(
     p_comment: parsed.value.comment,
   });
   const response = error ? null : assignmentResultResponse(data);
+  const queued = response && queuedBuiltinAssignmentId(data);
+  if (queued) {
+    const startedAt = Date.now();
+    after(() => runQueuedAssignment(queued, { deadlineAt: routeDeadline(startedAt) }));
+  }
   return response ?? assignmentError("save_failed");
 }

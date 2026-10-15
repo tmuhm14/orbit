@@ -76,10 +76,33 @@ const server = loadTs(new URL("../../../lib/assignments/server.ts", import.meta.
   "@/lib/supabase/route-auth": routeAuth,
 });
 const validation = loadTs(new URL("../../../lib/assignments/validation.ts", import.meta.url), { "./transitions": transitions });
+// The built-in executor's kickoff (A-02): after() callbacks are collected, and
+// the run itself is a double that records the id. The real
+// queuedBuiltinAssignmentId() decides what to schedule.
+let scheduled, afterCallbacks;
+beforeEach(() => {
+  scheduled = [];
+  afterCallbacks = [];
+});
+const executorServer = loadTs(new URL("../../../lib/assignments/executor-server.ts", import.meta.url), {
+  "@/lib/supabase/admin": { createAdminClient: () => null },
+  "@/lib/agent/server": { loadAgentSettings: async () => null },
+  "@/lib/agent/providers": { createProvider: () => null },
+  "./executor": { EXECUTOR_WALL_CLOCK_MS: 240_000, executeAssignment: async () => ({ outcome: "skipped" }),
+    materialFromRows: () => null, previousArtifactId: () => null },
+});
 const imports = {
+  "next/server": { after: (callback) => afterCallbacks.push(callback) },
   "@/lib/supabase/route-auth": routeAuth,
   "@/lib/assignments/server": server,
   "@/lib/assignments/validation": validation,
+  "@/lib/assignments/executor-server": {
+    ...executorServer,
+    runQueuedAssignment: async (id, options) => (scheduled.push([id, typeof options.deadlineAt]), { outcome: "submitted" }),
+  },
+};
+const runAfter = async () => {
+  for (const callback of afterCallbacks.splice(0)) await callback();
 };
 const load = (path) => loadTs(new URL(path, import.meta.url), imports);
 const collection = load("./route.ts");
@@ -90,6 +113,7 @@ const actions = {
   answer: load("./[id]/answer/route.ts"),
   review: load("./[id]/review/route.ts"),
 };
+const kickoff = load("./kickoff/route.ts");
 
 const headers = (origin = ORIGIN) => ({ host: "localhost", ...(origin ? { origin } : {}) });
 async function send(handler, url, { method = "POST", body, origin, id, raw } = {}) {
@@ -265,4 +289,60 @@ test("detail: children of one assignment, never the lease token", async () => {
   const missing = await send(detail.GET, `/api/assignments/${ART}`, { method: "GET", id: ART });
   assert.deepEqual([missing.status, missing.body.code], [404, "not_found"]);
   assert.equal((await send(detail.GET, "/api/assignments/x", { method: "GET", id: "x" })).status, 400);
+});
+
+// --- Built-in executor kickoff (A-02) ---------------------------------------------------
+
+test("routes that queue built-in work schedule one background run with after()", async () => {
+  assert.equal(collection.maxDuration, 300);
+  for (const action of ["retry", "answer", "review"]) assert.equal(actions[action].maxDuration, 300);
+  await create(validCreate);
+  assert.deepEqual(scheduled, [], "nothing runs before the response");
+  await runAfter();
+  assert.deepEqual(scheduled, [[ID, "number"]]);
+
+  rpcResult = () => ({ data: { status: "saved", assignment: row({ state: "queued", revision: 3 }) }, error: null });
+  await act("retry", { expectedRevision: 2 });
+  await act("answer", { expectedRevision: 2, questionId: QID, answer: "Formal" });
+  await act("review", { expectedRevision: 2, artifactId: ART, decision: "request_changes", comment: "Shorter" });
+  await runAfter();
+  assert.deepEqual(scheduled.map((s) => s[0]), [ID, ID, ID, ID]);
+});
+
+test("no run is scheduled for errors, non-queued results or cancel", async () => {
+  for (const data of [
+    { status: "active_assignment_exists", assignmentId: ID },
+    { status: "agent_disabled" },
+    { status: "saved", assignment: row({ state: "completed" }) },
+    { status: "saved", assignment: row({ state: "queued", executor_kind: "external" }) },
+  ]) {
+    rpcResult = () => ({ data, error: null });
+    await create(validCreate);
+    await act("review", { expectedRevision: 2, artifactId: ART, decision: "accept" });
+  }
+  rpcResult = () => ({ data: { status: "created", assignment: row() }, error: { message: "boom" } });
+  await create(validCreate);
+  rpcResult = () => ({ data: { status: "saved", assignment: row({ state: "canceled" }) }, error: null });
+  await act("cancel", { expectedRevision: 1 });
+  assert.equal(actions.cancel.maxDuration, undefined);
+  await runAfter();
+  assert.deepEqual(scheduled, []);
+});
+
+test("kickoff: reaps, then schedules the oldest queued built-in assignment in the workspace", async () => {
+  const ping = (body, options) => send(kickoff.POST, "/api/assignments/kickoff", { body, ...options });
+  const r = await ping({ workspaceId: WS });
+  assert.deepEqual([r.status, r.body], [202, { scheduled: 1 }]);
+  assert.equal(calls[0][1], "reap_own_assignment_leases");
+  await runAfter();
+  assert.deepEqual(scheduled, [[ID, "number"]]);
+  tables.assignments = [row({ state: "running" })];
+  assert.deepEqual((await ping({ workspaceId: WS })).body, { scheduled: 0 });
+  for (const body of [{}, { workspaceId: "x" }, { workspaceId: WS, extra: 1 }, []])
+    assert.equal((await ping(body)).status, 400);
+  assert.equal((await ping({ workspaceId: WS }, { origin: "https://evil.example" })).status, 403);
+  signedIn = false;
+  assert.equal((await ping({ workspaceId: WS })).status, 401);
+  await runAfter();
+  assert.equal(scheduled.length, 1);
 });
