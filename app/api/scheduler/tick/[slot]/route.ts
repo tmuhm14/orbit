@@ -1,4 +1,6 @@
+import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { recoverQueuedAssignments, routeDeadline } from "@/lib/assignments/executor-server";
 import { dueReportDate } from "@/lib/scheduled/schedule";
 import { runScheduledTask, type ScheduledTask } from "@/lib/scheduled/server";
 
@@ -33,6 +35,17 @@ async function reapAssignmentLeases(admin: Admin) {
   }
 }
 
+// Built-in assignments still queued after their kickoff was lost (A-02):
+// every tick starts a few of them in the background, after the response,
+// within this route's maxDuration. Counts only in logs.
+async function recoverAssignments(admin: Admin, startedAt: number) {
+  try {
+    await recoverQueuedAssignments(admin, { deadlineAt: routeDeadline(startedAt) });
+  } catch {
+    console.error("assignment recovery failed");
+  }
+}
+
 async function purgeAgentActionValues(admin: NonNullable<ReturnType<typeof createAdminClient>>) {
   try {
     const { data, error } = await admin.rpc("purge_agent_action_values");
@@ -59,6 +72,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ slot
   if (!admin) return new Response("Unavailable", { status: 503 });
   const purged = slot === PURGE_SLOT ? await purgeAgentActionValues(admin) : undefined;
   const reaped = slot === REAP_SLOT ? await reapAssignmentLeases(admin) : undefined;
+  const startedAt = now.getTime();
+  after(() => recoverAssignments(admin, startedAt));
   const { data: tasks, error } = await admin.from("scheduled_tasks")
     .select("id,user_id,name,kind,enabled,timezone,delivery_hour,cadence,jira_projects,github_repos,created_at")
     .eq("enabled", true).returns<ScheduledTask[]>();
