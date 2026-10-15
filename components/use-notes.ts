@@ -10,7 +10,9 @@ import {
   normalizeFollowup,
   browserNotes,
   createNote,
+  draftPlan,
   exportDocument,
+  hasUnsavedChanges,
   itemKind,
   mergeServerNotes,
   noteDrafts,
@@ -18,6 +20,9 @@ import {
   projectChildren,
   projectLinkError,
   projectsIn,
+  restoreDrafts,
+  settleIdenticalConflicts,
+  withRestored,
   type ConflictInfo,
   type Followup,
   type FollowupError,
@@ -127,6 +132,7 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
   >(new Map());
   const [deleteConflictIds, setDeleteConflictIds] = useState<string[]>([]);
   const [reloadRequired, setReloadRequired] = useState(false);
+  const reloadRequiredRef = useRef(false);
   // Refused link changes: id → code and the updatedAt that was refused.
   const [rejectedMap, setRejectedMap] = useState<
     ReadonlyMap<string, { code: ItemErrorCode; updatedAt: string }>
@@ -141,6 +147,10 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
   );
   // Project deletes the user confirmed: linked items move up to its parent.
   const unlinkOnDelete = useRef(new Set<string>());
+  // Restored drafts not shown yet (id → their updatedAt); see draftPlan().
+  const restoring = useRef(new Map<string, string>());
+  // Notes with an unsaved-edits draft in browser storage.
+  const unsavedStored = useRef(new Set<string>());
   const loadError = initialNotes === null;
   // What the server last confirmed for each note: its revision and the local
   // updatedAt that was saved. A note whose updatedAt differs locally has
@@ -160,11 +170,21 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
   const saving = useRef(false);
 
   function checkClient(minClient: number) {
-    if (minClient > NOTES_CLIENT_VERSION) setReloadRequired(true);
+    if (minClient > NOTES_CLIENT_VERSION) {
+      reloadRequiredRef.current = true;
+      setReloadRequired(true);
+    }
   }
 
   /** Records conflicts and keeps each local copy as a persisted draft. */
-  function addConflicts(found: ConflictInfo[]) {
+  function addConflicts(all: ConflictInfo[]) {
+    // Edits kept from before a reload that the server already has.
+    const { conflicts: found, settled } = settleIdenticalConflicts(
+      all,
+      notesRef.current,
+      unsavedStored.current,
+    );
+    for (const { id, entry } of settled) synced.current.set(id, entry);
     if (!found.length) return;
     const now = new Date().toISOString();
     const next = new Map(conflictsRef.current);
@@ -183,16 +203,48 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
     setConflictMap(next);
   }
 
-  function persistDraft(local: Note, baseRevision: number | null) {
+  function persistDraft(local: Note, baseRevision: number | null, unsaved = false) {
     try {
       noteDrafts.save(userId, {
         local,
         baseRevision,
         savedAt: new Date().toISOString(),
+        ...(unsaved ? { unsaved: true as const } : {}),
       });
     } catch {
       /* The draft is still kept in memory for this tab. */
     }
+  }
+
+  function removeDraft(id: string) {
+    try {
+      noteDrafts.remove(userId, id);
+    } catch {
+      /* Nothing to clean up. */
+    }
+  }
+
+  /**
+   * Brings browser-storage drafts in line with `list`: conflicted copies are
+   * kept current, unsaved edits are kept when `persistUnsaved` (or while a
+   * draft for them exists), and drafts of saved notes are removed. Restored
+   * drafts the list doesn't show yet are left alone (see draftPlan()).
+   */
+  function syncDrafts(list: Note[], persistUnsaved = reloadRequiredRef.current) {
+    const plan = draftPlan({
+      notes: list,
+      synced: synced.current,
+      conflicts: conflictsRef.current,
+      held: heldWrites(),
+      unsavedStored: unsavedStored.current,
+      restoring: restoring.current,
+      persistUnsaved,
+    });
+    restoring.current = plan.restoring;
+    for (const draft of plan.conflictDrafts) persistDraft(draft.local, draft.baseRevision);
+    for (const draft of plan.unsaved) persistDraft(draft.local, draft.baseRevision, true);
+    for (const id of plan.remove) removeDraft(id);
+    unsavedStored.current = plan.stored;
   }
 
   function dropConflict(id: string) {
@@ -200,11 +252,7 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
     next.delete(id);
     conflictsRef.current = next;
     setConflictMap(next);
-    try {
-      noteDrafts.remove(userId, id);
-    } catch {
-      /* Nothing to clean up. */
-    }
+    removeDraft(id);
   }
 
   function setRejected(
@@ -311,6 +359,8 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
     } finally {
       saving.current = false;
     }
+    // Drafts of notes saved just now go; unsaved ones stay current.
+    syncDrafts(notesRef.current);
     // Edits made while this save was in flight. After a failure, the next
     // refresh retries instead of looping.
     const rest = pendingWrites(
@@ -346,14 +396,20 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
 
   useEffect(() => {
     const timer = setTimeout(() => void flush(), SAVE_DELAY);
-    // Keep persisted drafts current with edits made after a conflict.
-    for (const [id, conflict] of conflictsRef.current) {
-      const local = notes.find((n) => n.id === id);
-      if (local) persistDraft(local, conflict.baseRevision);
-    }
+    // Keep persisted drafts current with edits made after a conflict (and,
+    // once a reload is required, with every unsaved edit). Skips restored
+    // drafts this list doesn't show yet: under StrictMode this effect runs
+    // again with the server copies after the mount effect restored them.
+    syncDrafts(notes);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [notes]);
+
+  useEffect(() => {
+    // The server needs a newer client: keep unsaved edits for after the reload.
+    if (reloadRequired) syncDrafts(notesRef.current, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadRequired]);
 
   useEffect(() => {
     try {
@@ -361,29 +417,29 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
     } catch {
       /* Unreadable browser notes stay where they are. */
     }
-    // Drafts kept from an earlier visit are unresolved conflicts.
+    // Drafts kept from an earlier visit: conflicts stay unresolved; unsaved
+    // edits are saved as usual unless the note changed elsewhere meanwhile.
+    // Computed from the server-rendered list and applied by id, so running
+    // this twice (StrictMode) restores the same drafts once.
     try {
       const drafts = noteDrafts.load(userId);
       if (drafts.length) {
-        const server = new Map(notesRef.current.map((n) => [n.id, n]));
-        const drafted = new Map(drafts.map((d) => [d.local.id, d.local]));
-        setNotes((list) => [
-          ...list.map((n) => drafted.get(n.id) ?? n),
-          ...drafts.filter((d) => !server.has(d.local.id)).map((d) => d.local),
-        ]);
-        const restored = new Map(conflictsRef.current);
-        for (const draft of drafts) {
-          const copy = server.get(draft.local.id) ?? null;
-          restored.set(draft.local.id, {
-            id: draft.local.id,
-            baseRevision: draft.baseRevision,
-            currentRevision: copy?.revision ?? null,
-            server: copy,
-            detectedAt: draft.savedAt,
-          });
+        const result = restoreDrafts(notesRef.current, drafts, { unsaved: !loadError });
+        for (const id of result.drop) removeDraft(id);
+        if (result.apply.length) {
+          restoring.current = new Map([
+            ...restoring.current,
+            ...result.apply.map((n): [string, string] => [n.id, n.updatedAt]),
+          ]);
+          setNotes((list) => withRestored(list, result.apply));
         }
-        conflictsRef.current = restored;
-        setConflictMap(restored);
+        unsavedStored.current = new Set([...unsavedStored.current, ...result.unsaved]);
+        if (result.conflicts.length) {
+          const restored = new Map(conflictsRef.current);
+          for (const conflict of result.conflicts) restored.set(conflict.id, conflict);
+          conflictsRef.current = restored;
+          setConflictMap(restored);
+        }
       }
     } catch {
       /* Unreadable drafts stay where they are. */
@@ -393,7 +449,17 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
       else void refresh();
     }
     function onBeforeUnload(event: BeforeUnloadEvent) {
-      if (conflictsRef.current.size) event.preventDefault();
+      // Keep unsaved edits in case the last save doesn't finish, and warn.
+      syncDrafts(notesRef.current, true);
+      if (
+        hasUnsavedChanges(
+          notesRef.current,
+          synced.current,
+          new Set(conflictsRef.current.keys()),
+          heldWrites(),
+        )
+      )
+        event.preventDefault();
     }
     const interval = setInterval(() => void refresh(), POLL_INTERVAL);
     window.addEventListener("focus", onVisible);
@@ -726,7 +792,10 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
     /** Notes restored because they changed elsewhere before a delete. */
     deleteConflictIds,
     dismissDeleteConflicts: () => setDeleteConflictIds([]),
-    /** The server needs a newer client; saving resumes after a reload. */
+    /**
+     * The server needs a newer client; saving resumes after a reload.
+     * Unsaved edits are kept in browser storage and restored after it.
+     */
     reloadRequired,
     // Kinds and project links (ADR 001 §2–3). Codes are LinkErrorCode; use
     // LINK_ERROR_MESSAGES from lib/notes for user-facing text.

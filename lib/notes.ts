@@ -740,13 +740,19 @@ export function mergeServerNotes(
   return { notes, synced: nextSynced, conflicts };
 }
 
-/** Prefix for conflicted drafts: `orbit.drafts.v1:<userId>:<noteId>`. */
+/** Prefix for kept drafts: `orbit.drafts.v1:<userId>:<noteId>`. */
 export const DRAFTS_KEY = "orbit.drafts.v1";
-/** Local edits that could not be saved because of a conflict. */
+/**
+ * Local edits kept in browser storage: edits that could not be saved because
+ * of a conflict, or (unsaved: true) edits not saved yet when the page was
+ * left or the server asked for a newer client. Older clients read an unsaved
+ * draft as a conflict, which keeps it safe either way.
+ */
 export type NoteDraft = {
   local: Note;
   baseRevision: number | null;
   savedAt: string;
+  unsaved?: true;
 };
 function isDraft(value: unknown): value is NoteDraft {
   const d = value as NoteDraft;
@@ -755,7 +761,8 @@ function isDraft(value: unknown): value is NoteDraft {
     typeof d === "object" &&
     isNote(d.local) &&
     (d.baseRevision === null || Number.isSafeInteger(d.baseRevision)) &&
-    typeof d.savedAt === "string"
+    typeof d.savedAt === "string" &&
+    (d.unsaved === undefined || d.unsaved === true)
   );
 }
 function storageKeys() {
@@ -802,6 +809,214 @@ export const noteDrafts = {
         localStorage.removeItem(key);
   },
 };
+
+/** Same value with object keys sorted (jsonb does not keep key order). */
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (!value || typeof value !== "object") return value;
+  const object = value as Record<string, unknown>;
+  return Object.fromEntries(
+    Object.keys(object)
+      .sort()
+      .map((key) => [key, canonical(object[key])]),
+  );
+}
+const instant = (value: string | null | undefined) => {
+  if (!value) return null;
+  const time = Date.parse(value);
+  return Number.isNaN(time) ? value : new Date(time).toISOString();
+};
+
+/**
+ * Whether two copies of a note hold the same values a user can edit.
+ * Server-managed fields (revision, timestamps, source) are ignored.
+ */
+export function sameEdits(a: Note, b: Note): boolean {
+  const view = (n: Note) =>
+    JSON.stringify(
+      canonical({
+        workspaceId: n.workspaceId,
+        title: n.title,
+        content: n.content,
+        plainText: n.plainText,
+        bucket: n.bucket,
+        tags: n.tags,
+        completedAt: instant(n.completedAt),
+        dueDate: n.dueDate ?? null,
+        kind: itemKind(n),
+        projectId: n.projectId ?? null,
+        waitingOn: n.waitingOn ?? null,
+        waitingFor: n.waitingFor ?? null,
+        nextCheckOn: n.nextCheckOn ?? null,
+      }),
+    );
+  return view(a) === view(b);
+}
+
+export type RestoredConflict = ConflictInfo & { detectedAt: string };
+
+/**
+ * What to do with drafts kept from an earlier visit, given the notes as the
+ * server rendered them. Conflicted drafts come back as conflicts, as before.
+ * An unsaved draft comes back as an ordinary unsaved edit while the server
+ * copy is still the one it was based on (or, for a note never saved, while
+ * the server has none); it is dropped when the server copy already holds the
+ * same edits, and it becomes a conflict otherwise. With `unsaved: false`
+ * (the list could not be loaded) unsaved drafts are left in storage.
+ * Pure, so restoring twice (React StrictMode) gives the same result.
+ */
+export function restoreDrafts(
+  current: Note[],
+  drafts: NoteDraft[],
+  { unsaved = true }: { unsaved?: boolean } = {},
+) {
+  const server = new Map(current.map((n) => [n.id, n]));
+  const apply: Note[] = [];
+  const conflicts: RestoredConflict[] = [];
+  const drop: string[] = [];
+  const pending: string[] = [];
+  for (const draft of drafts) {
+    const id = draft.local.id;
+    const copy = server.get(id) ?? null;
+    if (draft.unsaved) {
+      if (!unsaved) continue;
+      if (copy && sameEdits(copy, draft.local)) {
+        drop.push(id);
+        continue;
+      }
+      if (
+        copy
+          ? copy.revision != null && copy.revision === draft.baseRevision
+          : draft.baseRevision === null
+      ) {
+        apply.push(draft.local);
+        pending.push(id);
+        continue;
+      }
+    }
+    apply.push(draft.local);
+    conflicts.push({
+      id,
+      baseRevision: draft.baseRevision,
+      currentRevision: copy?.revision ?? null,
+      server: copy,
+      detectedAt: draft.savedAt,
+    });
+  }
+  return { apply, conflicts, drop, unsaved: pending };
+}
+
+/** Puts restored copies into a list, replacing by id. Idempotent. */
+export function withRestored(list: Note[], restored: Note[]): Note[] {
+  if (!restored.length) return list;
+  const byId = new Map(restored.map((n) => [n.id, n]));
+  const ids = new Set(list.map((n) => n.id));
+  return [
+    ...list.map((n) => byId.get(n.id) ?? n),
+    ...restored.filter((n) => !ids.has(n.id)),
+  ];
+}
+
+/**
+ * Which drafts to write and remove after the note list changed.
+ * `restoring` (id → the restored copy's updatedAt) holds restored drafts the
+ * list does not show yet; they are neither written nor removed until it
+ * does, so an effect that runs again with the earlier list (React StrictMode)
+ * cannot overwrite a restored draft with the server copy. Conflicted notes
+ * are always written. Unsaved edits are written when `persistUnsaved` (the
+ * page is being left, or a reload is required) and kept current while a
+ * draft for them exists (`unsavedStored`); a stored unsaved draft is removed
+ * once its note is saved or deleted.
+ */
+export function draftPlan({
+  notes,
+  synced,
+  conflicts,
+  held = new Map(),
+  unsavedStored,
+  restoring,
+  persistUnsaved,
+}: {
+  notes: Note[];
+  synced: SyncedMap;
+  conflicts: ReadonlyMap<string, { baseRevision: number | null }>;
+  held?: ReadonlyMap<string, string>;
+  unsavedStored: ReadonlySet<string>;
+  restoring: ReadonlyMap<string, string>;
+  persistUnsaved: boolean;
+}) {
+  const byId = new Map(notes.map((n) => [n.id, n]));
+  const stillRestoring = new Map(
+    [...restoring].filter(([id, updatedAt]) => byId.get(id)?.updatedAt !== updatedAt),
+  );
+  const conflictDrafts: { local: Note; baseRevision: number | null }[] = [];
+  for (const [id, conflict] of conflicts) {
+    const local = byId.get(id);
+    if (local && !stillRestoring.has(id))
+      conflictDrafts.push({ local, baseRevision: conflict.baseRevision });
+  }
+  const { changed } = pendingWrites(notes, synced, new Set(conflicts.keys()), held);
+  const pendingIds = new Set(changed.map((n) => n.id));
+  const unsaved = changed
+    .filter((n) => !stillRestoring.has(n.id) && (persistUnsaved || unsavedStored.has(n.id)))
+    .map(({ expectedRevision, ...local }) => ({
+      local: local as Note,
+      baseRevision: expectedRevision ?? null,
+    }));
+  const remove = [...unsavedStored].filter(
+    (id) => !stillRestoring.has(id) && !conflicts.has(id) && !pendingIds.has(id),
+  );
+  const stored = new Set(
+    [...unsavedStored, ...unsaved.map((d) => d.local.id)].filter(
+      (id) => !remove.includes(id) && !conflicts.has(id),
+    ),
+  );
+  return { conflictDrafts, unsaved, remove, stored, restoring: stillRestoring };
+}
+
+/**
+ * Splits conflicts on notes with an unsaved draft (`eligible`) whose server
+ * copy already holds the same edits: those were saved before a reload (for
+ * example by the page's last keepalive save) and are settled with the
+ * server's revision instead of being shown as conflicts.
+ */
+export function settleIdenticalConflicts(
+  found: ConflictInfo[],
+  notes: Note[],
+  eligible: ReadonlySet<string>,
+) {
+  const byId = new Map(notes.map((n) => [n.id, n]));
+  const conflicts: ConflictInfo[] = [];
+  const settled: { id: string; entry: SyncedEntry }[] = [];
+  for (const conflict of found) {
+    const local = byId.get(conflict.id);
+    if (
+      local &&
+      conflict.server &&
+      conflict.currentRevision != null &&
+      eligible.has(conflict.id) &&
+      sameEdits(local, conflict.server)
+    )
+      settled.push({
+        id: conflict.id,
+        entry: { revision: conflict.currentRevision, updatedAt: local.updatedAt },
+      });
+    else conflicts.push(conflict);
+  }
+  return { conflicts, settled };
+}
+
+/** Whether there are conflicts, or edits or deletes not yet confirmed. */
+export function hasUnsavedChanges(
+  notes: Note[],
+  synced: SyncedMap,
+  conflicted: ReadonlySet<string>,
+  held: ReadonlyMap<string, string> = new Map(),
+) {
+  if (conflicted.size) return true;
+  const { changed, deleted } = pendingWrites(notes, synced, conflicted, held);
+  return changed.length > 0 || deleted.length > 0;
+}
 
 /** Accent palette for workspaces. ink is the text color on a solid accent. */
 export const WORKSPACE_COLORS = {
