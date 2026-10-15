@@ -4518,3 +4518,203 @@ main.home-focus {
   .tag-editor input { min-height: 44px; }
 }
 /* ===== End item properties ===== */
+
+/* ===== Delegation (U-04): delegate panel, status chip, assignment detail ===== */
+.assignment-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.delegate-button { color: #c3b0e6; }
+.delegate-button:disabled { opacity: 0.5; cursor: default; }
+.assignment-state,
+.assignment-chip {
+  --tone: var(--slate);
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px;
+  border: 1px solid color-mix(in srgb, var(--tone) 40%, transparent); border-radius: 999px;
+  background: color-mix(in srgb, var(--tone) 12%, transparent);
+  color: color-mix(in srgb, var(--tone) 75%, #fff); font-size: 12px; white-space: nowrap;
+}
+.assignment-chip { transition: background var(--motion-fast), border-color var(--motion-fast); }
+.assignment-chip:hover { background: color-mix(in srgb, var(--tone) 22%, transparent); }
+.assignment-chip:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
+.assignment-chip > svg { opacity: 0.7; }
+.assignment-state-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--tone); flex: none; }
+:is(.assignment-state, .assignment-chip, .assignment-live).is-queued { --tone: var(--blue); }
+:is(.assignment-state, .assignment-chip, .assignment-live).is-running { --tone: var(--purple); }
+:is(.assignment-state, .assignment-chip, .assignment-live).is-needs_input { --tone: var(--amber); }
+:is(.assignment-state, .assignment-chip, .assignment-live).is-needs_review { --tone: var(--pink); }
+:is(.assignment-state, .assignment-chip, .assignment-live).is-completed { --tone: var(--green); }
+:is(.assignment-state, .assignment-chip, .assignment-live).is-failed { --tone: #e0a38e; }
+:is(.assignment-state, .assignment-chip, .assignment-live).is-canceled { --tone: var(--slate); }
+/* A gentle pulse, only while the agent is actually working (off under reduced motion). */
+.assignment-chip.is-running .assignment-state-dot,
+.assignment-state.is-running .assignment-state-dot,
+.assignment-live.is-running strong::before {
+  animation: assignment-pulse calc(var(--motion-slow) * 3) var(--ease-in-out) infinite;
+}
+@keyframes assignment-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tone) 55%, transparent); }
+  50% { box-shadow: 0 0 0 4px transparent; }
+}
+
+.assignment-dialog {
+  position: relative; display: flex; flex-direction: column; width: 600px; max-width: 100%;
+  max-height: calc(100dvh - 70px); border: 1px solid #b49ccc29; border-radius: 14px;
+  background: #1c1723; box-shadow: 0 25px 90px #0008; overflow: hidden;
+  animation: rise var(--motion-base) var(--ease-orbit);
+}
+.assignment-dialog-head {
+  display: flex; align-items: flex-start; gap: 12px; padding: 20px 20px 14px 24px;
+  border-bottom: 1px solid #ffffff08; flex-shrink: 0;
+}
+.assignment-dialog-head > div { flex: 1; min-width: 0; }
+.assignment-dialog-head h2 { margin: 0; font-family: "Manrope", sans-serif; font-size: 19px; font-weight: 600; letter-spacing: -0.3px; }
+.assignment-dialog-head p { margin: 6px 0 0; font-size: 13px; line-height: 1.55; color: #b9aec4; overflow-wrap: anywhere; }
+.assignment-kicker { display: block; margin-bottom: 2px; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: #8c7c98; }
+.assignment-orbit {
+  display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #b09aeb44, #b09aeb12 70%); color: var(--purple);
+  box-shadow: 0 0 0 1px #b09aeb33, 0 0 22px #b09aeb22;
+}
+.assignment-close { margin: -4px -6px 0 0; }
+.assignment-dialog-body { display: flex; flex-direction: column; gap: 16px; padding: 18px 24px 20px; overflow: auto; overscroll-behavior: contain; }
+.assignment-dialog-actions {
+  display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px;
+  font-size: 12px; color: #b9aec4;
+}
+footer.assignment-dialog-actions { justify-content: space-between; padding: 12px 20px 14px 24px; border-top: 1px solid #ffffff09; flex-shrink: 0; }
+.assignment-dialog .primary-button:disabled,
+.assignment-dialog .secondary-button:disabled,
+.assignment-dialog .danger-button:disabled { opacity: 0.55; cursor: default; }
+.assignment-dialog .danger-button { display: inline-flex; align-items: center; gap: 6px; padding: 9px 12px; }
+
+.assignment-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.assignment-field > label,
+.assignment-field-label label,
+.assignment-step label { font-size: 13px; font-weight: 550; color: #ddd0ea; }
+.assignment-field-label { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.assignment-required { margin-left: 6px; font-size: 11px; font-weight: 400; color: #8c7f98; }
+.assignment-dialog textarea {
+  width: 100%; min-width: 0; padding: 9px 11px; resize: vertical; border: 1px solid #ffffff14;
+  border-radius: 8px; background: #ffffff05; color: #e6ddef; font: inherit; font-size: 13px; line-height: 1.55;
+}
+.assignment-dialog textarea::placeholder { color: #75627f; }
+.assignment-dialog textarea:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
+.assignment-dialog textarea[aria-invalid="true"] { border-color: #e0a38e88; }
+.assignment-field-foot { display: flex; justify-content: space-between; gap: 10px; }
+.assignment-field-foot small,
+.assignment-count,
+.assignment-step-actions small { font-size: 11px; color: #8c7f98; white-space: nowrap; }
+.assignment-field-foot small.is-over { color: #e0a38e; }
+.context-picker { max-width: none; }
+.context-selected { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 0; padding: 0; list-style: none; }
+.context-selected li {
+  display: inline-flex; align-items: center; gap: 2px; max-width: 100%; padding: 1px 2px 1px 10px;
+  border: 1px solid #b09aeb33; border-radius: 999px; background: #b09aeb12; color: #ddd0ea; font-size: 12px;
+}
+.context-selected li > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.context-selected .icon-button { width: 24px; height: 24px; border-radius: 50%; }
+.assignment-privacy {
+  display: flex; gap: 9px; margin: 0; padding: 10px 12px; border: 1px solid #91cbb326;
+  border-radius: 8px; background: #91cbb30a; font-size: 12px; line-height: 1.55; color: #bfd5ca;
+}
+.assignment-privacy > svg { flex: none; margin-top: 2px; color: var(--green); }
+
+.assignment-error {
+  display: flex; gap: 9px; padding: 10px 12px; border: 1px solid #e0a38e33; border-radius: 8px;
+  background: #3e2a2433; font-size: 12px; line-height: 1.55; color: #f0c9bb;
+}
+.assignment-error > svg { flex: none; margin-top: 2px; color: #e0a38e; }
+.assignment-error p { margin: 0; }
+.assignment-error .assignment-error-links { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; }
+.assignment-error-links a,
+.assignment-error-links .text-button { padding: 2px 0; color: #f3d3c6; text-decoration: underline; font-size: 12px; }
+
+.assignment-loading { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; color: #b9aec4; }
+.assignment-dialog .spin { animation: assignment-spin 1s linear infinite; }
+@keyframes assignment-spin { to { transform: rotate(360deg); } }
+.assignment-summary { display: flex; flex-direction: column; gap: 6px; }
+.assignment-summary-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; margin-bottom: 6px; }
+.assignment-times { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; font-size: 11px; color: #8c7f98; }
+.assignment-times div { display: flex; gap: 4px; }
+.assignment-times dt { color: #75697f; }
+.assignment-times dd { margin: 0; color: #b0a4bb; }
+.assignment-label { margin: 6px 0 0; font-size: 10px; font-weight: 500; letter-spacing: 1.4px; text-transform: uppercase; color: #8c7c98; }
+.assignment-outcome { margin: 0; max-height: 180px; overflow: auto; font-size: 14px; line-height: 1.6; color: #ece3f6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.assignment-link {
+  display: inline-flex; align-items: center; gap: 5px; width: fit-content; max-width: 100%; padding: 3px 0;
+  font-size: 13px; color: #c9b6ee; text-align: left; overflow-wrap: anywhere;
+}
+.assignment-link:hover { color: #e2d4ff; text-decoration: underline; }
+.assignment-muted { margin: 0; font-size: 12px; line-height: 1.5; color: #8c7f98; }
+.assignment-live {
+  --tone: var(--slate);
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 11px 14px;
+  border: 1px solid color-mix(in srgb, var(--tone) 30%, transparent); border-radius: 9px;
+  background: color-mix(in srgb, var(--tone) 8%, transparent);
+}
+.assignment-live p { margin: 0; font-size: 13px; color: #e6ddef; overflow-wrap: anywhere; }
+.assignment-live strong { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+.assignment-live strong::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--tone); }
+.assignment-live small { font-size: 12px; color: #9d91a8; }
+.assignment-progress { color: #c8bad8; }
+.assignment-untrusted { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.assignment-step { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border-radius: 10px; border: 1px solid #ffffff12; background: #ffffff04; }
+.assignment-step h3 { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 13px; font-weight: 600; color: #ece3f6; overflow-wrap: anywhere; }
+.assignment-step > p { margin: 0; font-size: 13px; line-height: 1.6; color: #d6cbe2; }
+.assignment-step.is-question { border-color: #d0b18540; background: #d0b1850c; }
+.assignment-step.is-question h3 svg { color: var(--amber); }
+.assignment-step.is-review { border-color: #c69eb940; background: #c69eb90b; }
+.assignment-step.is-review h3 svg { color: var(--pink); }
+.assignment-step.is-failed { border-color: #e0a38e40; background: #3e2a2426; }
+.assignment-step-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; }
+.assignment-step-actions small { margin-right: auto; }
+.assignment-artifact {
+  max-height: 280px; overflow: auto; padding: 12px 14px; border-radius: 8px; background: #00000026;
+  border: 1px solid #ffffff0d; font-size: 13px; line-height: 1.65; color: #ded3ea;
+}
+.assignment-artifact:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
+.assignment-section { display: flex; flex-direction: column; gap: 6px; }
+.assignment-context { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.assignment-timeline { margin: 4px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.assignment-timeline li { --tone: var(--slate); position: relative; display: flex; gap: 12px; padding: 0 0 14px; }
+.assignment-timeline li:not(:last-child)::after {
+  content: ""; position: absolute; left: 4px; top: 14px; bottom: 0; width: 1px; background: #ffffff12;
+}
+.assignment-timeline li.is-progress { --tone: var(--purple); }
+.assignment-timeline li.is-question { --tone: var(--amber); }
+.assignment-timeline li.is-answer { --tone: var(--blue); }
+.assignment-timeline li.is-result { --tone: var(--pink); }
+.assignment-timeline li.is-good { --tone: var(--green); }
+.assignment-timeline li.is-bad { --tone: #e0a38e; }
+.assignment-timeline-dot { width: 9px; height: 9px; margin-top: 4px; flex: none; border-radius: 50%; background: var(--tone); box-shadow: 0 0 0 3px #1c1723; }
+.assignment-timeline li > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.assignment-timeline strong { font-size: 12px; font-weight: 550; color: #e2d7ee; }
+.assignment-timeline p { margin: 0; font-size: 12px; line-height: 1.55; color: #b9aec4; }
+.assignment-timeline time { font-size: 11px; color: #75697f; }
+
+@media (max-width: 600px) {
+  .assignment-dialog { max-height: calc(100dvh - 24px); border-radius: 12px; }
+  .assignment-dialog-head { padding: 16px 14px 12px 16px; }
+  .assignment-dialog-body { padding: 14px 16px 16px; }
+  footer.assignment-dialog-actions { padding: 10px 14px 12px 16px; }
+  .assignment-step { padding: 12px; }
+  .assignment-step-actions > button { flex: 1 1 auto; }
+}
+/* Touch: every delegation control is at least 44px tall. */
+@media (pointer: coarse) {
+  .assignment-chip,
+  .delegate-button,
+  .assignment-link,
+  .assignment-dialog .primary-button,
+  .assignment-dialog .secondary-button,
+  .assignment-dialog .danger-button,
+  .assignment-dialog .text-button,
+  .assignment-dialog .project-option,
+  .assignment-dialog .project-picker-field,
+  .assignment-error-links a,
+  .assignment-error-links .text-button { min-height: 44px; }
+  .assignment-error-links a { display: inline-flex; align-items: center; }
+  .assignment-close,
+  .context-selected .icon-button { width: 44px; height: 44px; }
+  .context-selected li { padding-left: 12px; }
+}
+/* ===== End delegation ===== */

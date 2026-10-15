@@ -45,6 +45,7 @@ import {
 import { KIND_LABELS, workspaceMoveError } from "@/lib/item-properties";
 import { ConflictBanner, ReloadBanner } from "./conflict-banner";
 import {
+  AssignmentField,
   FollowupFields,
   KindField,
   ProjectContents,
@@ -119,6 +120,8 @@ export function NoteEditor({
   onDelete,
   onOpenNote,
   onToast,
+  onOpenSettings,
+  onOpenAgent,
   storageError,
 }: {
   note: Note;
@@ -131,6 +134,9 @@ export function NoteEditor({
   onDelete: () => void;
   onOpenNote: (id: string) => void;
   onToast: (message: string) => void;
+  /** Closes the editor and opens Settings (model key) or the Agent dialog. */
+  onOpenSettings?: () => void;
+  onOpenAgent?: () => void;
   storageError: boolean;
 }) {
   const [slash, setSlash] = useState<{
@@ -527,6 +533,13 @@ export function NoteEditor({
               </div>
               <FollowupFields note={note} api={api} />
               <ReminderField note={note} api={api} />
+              <AssignmentField
+                note={note}
+                api={api}
+                onOpenNote={onOpenNote}
+                onOpenSettings={onOpenSettings}
+                onOpenAgent={onOpenAgent}
+              />
               <span>Tags</span>
               <div className="tag-editor">
                 {note.tags.map((t) => (

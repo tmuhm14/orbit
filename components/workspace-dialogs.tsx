@@ -203,6 +203,14 @@ export function WorkspaceDialogs({
           onDelete={onDeleteNote}
           onOpenNote={onOpenNote}
           onToast={onToast}
+          onOpenSettings={() => {
+            onCloseNote();
+            router.push("/settings");
+          }}
+          onOpenAgent={() => {
+            onCloseNote();
+            dialogs.setAgentOpen(true);
+          }}
           storageError={storageError}
         />
       )}
