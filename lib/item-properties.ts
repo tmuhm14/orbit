@@ -148,7 +148,8 @@ const hhmm = (minutes: number) =>
   `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 
 /**
- * Snooze choices as wall-clock times in the reminder's zone: later today
+ * Snooze choices as wall-clock times in `timezone` (the editor uses the
+ * viewer's, so "tomorrow" means their tomorrow): later today
  * (three hours on, rounded up to the half hour; omitted when that would be
  * tomorrow), tomorrow at 9:00 and next Monday at 9:00.
  */

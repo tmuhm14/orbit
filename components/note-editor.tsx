@@ -33,7 +33,25 @@ import {
   Hash,
   ArrowUpRight,
 } from "lucide-react";
-import { BUCKETS, type Note, type BucketId, type Workspace } from "@/lib/notes";
+import {
+  BUCKETS,
+  LINK_ERROR_MESSAGES,
+  itemKind,
+  type Note,
+  type BucketId,
+  type LinkErrorCode,
+  type Workspace,
+} from "@/lib/notes";
+import { KIND_LABELS, workspaceMoveError } from "@/lib/item-properties";
+import { ConflictBanner, ReloadBanner } from "./conflict-banner";
+import {
+  FollowupFields,
+  KindField,
+  ProjectContents,
+  ProjectField,
+  ReminderField,
+  type ItemApi,
+} from "./item-properties";
 
 const commands = [
   {
@@ -95,16 +113,24 @@ const commands = [
 export function NoteEditor({
   note,
   workspaces,
+  api,
   onUpdate,
   onClose,
   onDelete,
+  onOpenNote,
+  onToast,
   storageError,
 }: {
   note: Note;
   workspaces: Workspace[];
+  /** Kinds, links, follow-ups, reminders and conflict recovery (useNotes). */
+  api: ItemApi;
   onUpdate: (patch: Partial<Note>) => void;
   onClose: () => void;
+  /** Deletes the note; a project with linked items asks first (Workspace). */
   onDelete: () => void;
+  onOpenNote: (id: string) => void;
+  onToast: (message: string) => void;
   storageError: boolean;
 }) {
   const [slash, setSlash] = useState<{
@@ -115,6 +141,14 @@ export function NoteEditor({
   const [commandIndex, setCommandIndex] = useState(0);
   const [tag, setTag] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [moveError, setMoveError] = useState<LinkErrorCode | null>(null);
+  const conflict = api.conflictFor(note.id);
+  const itemError = api.itemErrorFor(note.id);
+  const kind = itemKind(note);
+  const linkedChildren = kind === "project" ? api.childrenOf(note.id).length : 0;
+  // The content this editor last sent up, so a copy that arrives from
+  // elsewhere (Use theirs, a refresh of a clean note) is shown.
+  const contentRef = useRef(note.content);
   const dialogRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
@@ -175,7 +209,9 @@ export function NoteEditor({
       },
     },
     onUpdate: ({ editor: e }) => {
-      onUpdateRef.current({ content: e.getJSON(), plainText: e.getText() });
+      const content = e.getJSON();
+      contentRef.current = content;
+      onUpdateRef.current({ content, plainText: e.getText() });
       const { $from } = e.state.selection;
       const text = $from.parent.textBetween(0, $from.parentOffset, " ");
       const match = text.match(/(?:^|\s)\/([a-zA-Z0-9 -]*)$/);
@@ -190,6 +226,13 @@ export function NoteEditor({
     },
     onSelectionUpdate: () => setSlash(null),
   });
+  useEffect(() => {
+    if (!editor || note.content === contentRef.current) return;
+    contentRef.current = note.content;
+    // Same document (a refresh re-read it): keep the cursor where it is.
+    if (JSON.stringify(editor.getJSON()) === JSON.stringify(note.content)) return;
+    editor.commands.setContent(note.content, { emitUpdate: false });
+  }, [editor, note.content]);
   // Render over the document rather than after its minimum-height content.
   // Coordinates stay relative to the dialog, including while it animates in.
   useLayoutEffect(() => {
@@ -322,14 +365,24 @@ export function NoteEditor({
         }}
       >
         <div className="editor-topbar">
-          <span id="note-dialog-label">YOUR SPACE / NOTE</span>
+          <span id="note-dialog-label">
+            YOUR SPACE / {KIND_LABELS[kind].toUpperCase()}
+          </span>
           <span
-            className={storageError ? "save-status error-text" : "save-status"}
+            className={
+              storageError || conflict || itemError
+                ? "save-status error-text"
+                : "save-status"
+            }
           >
-            <Check size={13} />
-            {storageError
-              ? "Not saved yet — retrying"
-              : "Synced to your account"}
+            {!(storageError || conflict || itemError) && <Check size={13} />}
+            {conflict
+              ? "Kept here — choose a version"
+              : itemError
+                ? "A change wasn’t saved"
+                : storageError
+                  ? "Not saved yet — retrying"
+                  : "Synced to your account"}
           </span>
           <button
             className="icon-button"
@@ -339,6 +392,26 @@ export function NoteEditor({
             <X size={20} />
           </button>
         </div>
+        {api.reloadRequired && <ReloadBanner compact />}
+        {conflict && (
+          <ConflictBanner
+            conflict={conflict}
+            onKeepMine={() => {
+              api.keepMine(note.id);
+              onToast("Kept your version");
+            }}
+            onUseTheirs={() => {
+              api.takeTheirs(note.id);
+              onToast(conflict.server ? "Showing the version saved elsewhere" : "Removed here too");
+            }}
+            onSaveCopy={() => {
+              const copy = api.saveMineAsCopy(note.id);
+              if (!copy) return;
+              onToast("Your version is saved as a new note");
+              onOpenNote(copy);
+            }}
+          />
+        )}
         <div className="editor-scroll" ref={scrollRef}>
           <div className="editor-cover">
             <div className="mini-orbit" />
@@ -355,6 +428,7 @@ export function NoteEditor({
               onChange={(e) => onUpdate({ title: e.target.value })}
             />
             <div className="note-properties">
+              <KindField note={note} api={api} />
               <span>Bucket</span>
               <div className="select-wrap">
                 <span
@@ -375,24 +449,38 @@ export function NoteEditor({
                 </select>
                 <ChevronDown size={14} />
               </div>
+              <ProjectField note={note} api={api} />
               {workspaces.length > 1 && (
                 <>
                   <span>Workspace</span>
-                  <div className="select-wrap">
-                    <select
-                      aria-label="Note workspace"
-                      value={note.workspaceId}
-                      onChange={(e) =>
-                        onUpdate({ workspaceId: e.target.value })
-                      }
-                    >
-                      {workspaces.map((w) => (
-                        <option key={w.id} value={w.id}>
-                          {w.name}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown size={14} />
+                  <div className="property-control">
+                    <div className="select-wrap">
+                      <select
+                        aria-label="Note workspace"
+                        aria-describedby={moveError ? "note-workspace-error" : undefined}
+                        value={note.workspaceId}
+                        onChange={(e) => {
+                          // Linked items can't change space (ADR 001): unlink first.
+                          const error = workspaceMoveError(api.notes, note);
+                          setMoveError(error);
+                          if (!error) onUpdate({ workspaceId: e.target.value });
+                        }}
+                      >
+                        {workspaces.map((w) => (
+                          <option key={w.id} value={w.id}>
+                            {w.name}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown size={14} />
+                    </div>
+                    {moveError && (
+                      <p className="property-error" id="note-workspace-error" role="alert">
+                        {linkedChildren
+                          ? "Move or unlink this project’s items before moving it to another space."
+                          : LINK_ERROR_MESSAGES[moveError]}
+                      </p>
+                    )}
                   </div>
                 </>
               )}
@@ -437,6 +525,8 @@ export function NoteEditor({
                 />
                 {note.dueDate && <button type="button" className="icon-button" aria-label="Clear due date" onClick={() => onUpdate({ dueDate: null })}><X size={14} /></button>}
               </div>
+              <FollowupFields note={note} api={api} />
+              <ReminderField note={note} api={api} />
               <span>Tags</span>
               <div className="tag-editor">
                 {note.tags.map((t) => (
@@ -467,6 +557,7 @@ export function NoteEditor({
                 />
               </div>
             </div>
+            <ProjectContents note={note} api={api} onOpenNote={onOpenNote} />
             <div className="format-toolbar" aria-label="Text formatting">
               <button
                 className={editor?.isActive("bold") ? "active" : ""}
@@ -575,7 +666,7 @@ export function NoteEditor({
           <div>
             {confirmDelete ? (
               <>
-                <span>Delete this note?</span>
+                <span>Delete this {KIND_LABELS[kind].toLowerCase()}?</span>
                 <button
                   className="text-button"
                   onClick={() => setConfirmDelete(false)}
@@ -590,8 +681,9 @@ export function NoteEditor({
               <>
                 <button
                   className="icon-button"
-                  aria-label="Delete note"
-                  onClick={() => setConfirmDelete(true)}
+                  aria-label={`Delete ${KIND_LABELS[kind].toLowerCase()}`}
+                  // A project with linked items gets its own dialog instead.
+                  onClick={() => (linkedChildren ? onDelete() : setConfirmDelete(true))}
                 >
                   <Trash2 size={16} />
                 </button>
