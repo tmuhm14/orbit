@@ -2,6 +2,10 @@ import {
   BUCKETS,
   ITEM_KINDS,
   MAX_PROJECT_DEPTH,
+  WAITING_FOR_MAX,
+  WAITING_ON_MAX,
+  followupError,
+  normalizeFollowupText,
   type BucketId,
   type ItemKind,
   type LinkErrorCode,
@@ -29,10 +33,15 @@ export type AgentNoteSummary = {
   pendingTriage: boolean;
   kind: ItemKind;
   projectId: string | null;
+  /** Calendar date (YYYY-MM-DD) to check on a follow-up, or null. */
+  nextCheckOn: string | null;
 };
 export type AgentNoteDetail = Omit<AgentNoteSummary, "snippet"> & {
   text: string;
   origin: Record<string, unknown> | null;
+  /** Follow-up text: only in the full read, not in lists (minimum necessary). */
+  waitingOn: string | null;
+  waitingFor: string | null;
 };
 export type NoteFilter = {
   bucket?: BucketId;
@@ -54,6 +63,10 @@ export type NoteChanges = {
   kind?: ItemKind;
   /** A project in this workspace, or null to unlink. */
   projectId?: string | null;
+  /** Follow-up fields; null clears. Allowed on any note. */
+  waitingOn?: string | null;
+  waitingFor?: string | null;
+  nextCheckOn?: string | null;
 };
 export type NewNote = {
   title: string;
@@ -62,6 +75,9 @@ export type NewNote = {
   tags: string[];
   kind?: ItemKind;
   projectId?: string | null;
+  waitingOn?: string;
+  waitingFor?: string;
+  nextCheckOn?: string;
 };
 /** Why a store write was refused; executeTool turns it into a tool error. */
 export type StoreRefusal =
@@ -115,11 +131,29 @@ const MAX_LIST = 50;
 const MAX_TEXT = 8_000;
 const MAX_APPEND = 4_000;
 
+/** Follow-up tool parameters; an empty string clears a field on update. */
+const FOLLOWUP_PARAMS = {
+  waiting_on: {
+    type: "string",
+    maxLength: WAITING_ON_MAX,
+    description: "Who this is waiting on (a name, as the user wrote it). Empty string clears it.",
+  },
+  waiting_for: {
+    type: "string",
+    maxLength: WAITING_FOR_MAX,
+    description: "What is expected from them, in one line. Empty string clears it.",
+  },
+  next_check_on: {
+    type: "string",
+    description: "Date to check on it, YYYY-MM-DD. Empty string clears it.",
+  },
+};
+
 export const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: "list_notes",
     description:
-      "List notes in the workspace, newest first. Returns ids, titles, buckets, kinds, project ids, tags, and a short snippet.",
+      "List notes in the workspace, newest first. Returns ids, titles, buckets, kinds, project ids, next check dates, tags, and a short snippet.",
     parameters: {
       type: "object",
       properties: {
@@ -141,7 +175,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: "get_note",
-    description: "Read one note's full text and where it came from.",
+    description: "Read one note's full text, its follow-up details, and where it came from.",
     parameters: {
       type: "object",
       properties: { id: { type: "string" } },
@@ -151,7 +185,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: "update_note",
     description:
-      "Change a note's title, bucket, kind, project, tags (replaces the list), or completion, or append text to it. Every change is logged and can be undone by the user.",
+      "Change a note's title, bucket, kind, project, follow-up (waiting on, waiting for, next check date), tags (replaces the list), or completion, or append text to it. Every change is logged and can be undone by the user.",
     parameters: {
       type: "object",
       properties: {
@@ -169,6 +203,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
           description:
             "Id of a project note in this workspace to file it under, or an empty string to unlink.",
         },
+        ...FOLLOWUP_PARAMS,
         tags: { type: "array", items: { type: "string" }, maxItems: 20 },
         completed: { type: "boolean" },
         append_text: {
@@ -199,6 +234,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
           type: "string",
           description: "Id of a project note in this workspace to file it under.",
         },
+        ...FOLLOWUP_PARAMS,
         tags: { type: "array", items: { type: "string" }, maxItems: 20 },
         reason: { type: "string" },
       },
@@ -216,6 +252,7 @@ ${BUCKETS.map((b) => `- ${b.id}: ${b.name}. ${b.hint}`).join("\n")}
 Kinds say what an item is, separately from its bucket: note, task (an action), project (an outcome with several steps), document (reference material), followup (something you are waiting on). A task can sit in any bucket; moving a bucket never changes the kind.
 - Set the kind only on captures you are triaging and on notes you create. For any other note, don't change its kind; list the change you would suggest in your summary so the user can decide.
 - File an item under a project with project_id (the id of a project note in this workspace). Projects can contain sub-projects, at most ${MAX_PROJECT_DEPTH} levels deep, and a project can't go inside itself.
+- Any item can record a follow-up: waiting_on (who), waiting_for (what is expected) and next_check_on (a date to check, YYYY-MM-DD). Fill them only from what the note says; don't invent names or dates.
 
 How to work:
 - Triage means clarifying each item: move it out of the inbox into the bucket that fits, give it a short, specific title (an action starting with a verb for next actions), and add a few lowercase tags that match the workspace's existing tags where possible.
@@ -276,6 +313,30 @@ const projectId = (value: unknown, allowUnlink: boolean) => {
     throw new ToolInputError("project_id must be a project's id");
   return value.trim().toLowerCase();
 };
+/** Follow-up text: trimmed, single line, within its limit; "" or null clears. */
+const followupText = (
+  value: unknown,
+  field: "waiting_on" | "waiting_for",
+  allowClear: boolean,
+) => {
+  if (value === undefined) return undefined;
+  if (value !== null && typeof value !== "string")
+    throw new ToolInputError(`${field} must be text`);
+  const text = normalizeFollowupText(value);
+  if (text === null) return allowClear ? null : undefined;
+  const max = field === "waiting_on" ? WAITING_ON_MAX : WAITING_FOR_MAX;
+  if (followupError(field === "waiting_on" ? { waitingOn: text } : { waitingFor: text }))
+    throw new ToolInputError(`${field} must be one line of at most ${max} characters`);
+  return text;
+};
+/** A calendar date; "" or null clears. */
+const checkDate = (value: unknown, allowClear: boolean) => {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return allowClear ? null : undefined;
+  if (typeof value !== "string" || followupError({ nextCheckOn: value.trim() }))
+    throw new ToolInputError("next_check_on must be a date like 2026-10-31");
+  return value.trim();
+};
 const refused = (result: unknown) =>
   typeof result === "object" && result !== null && "refused" in result
     ? JSON.stringify({ error: REFUSALS[(result as { refused: StoreRefusal }).refused] ?? "Not changed" })
@@ -331,6 +392,9 @@ export async function executeTool(
           appendText: str(input.append_text, "append_text", MAX_APPEND),
           kind: kind(input.kind),
           projectId: projectId(input.project_id, true),
+          waitingOn: followupText(input.waiting_on, "waiting_on", true),
+          waitingFor: followupText(input.waiting_for, "waiting_for", true),
+          nextCheckOn: checkDate(input.next_check_on, true),
         };
         if (changes.title === "") delete changes.title;
         if (changes.appendText === "") delete changes.appendText;
@@ -365,6 +429,12 @@ export async function executeTool(
         const project = projectId(input.project_id, false);
         if (newKind) note.kind = newKind;
         if (project) note.projectId = project;
+        const waitingOn = followupText(input.waiting_on, "waiting_on", false);
+        const waitingFor = followupText(input.waiting_for, "waiting_for", false);
+        const nextCheckOn = checkDate(input.next_check_on, false);
+        if (waitingOn) note.waitingOn = waitingOn;
+        if (waitingFor) note.waitingFor = waitingFor;
+        if (nextCheckOn) note.nextCheckOn = nextCheckOn;
         const id = await store.create(note, str(input.reason, "reason", 300) || "");
         const refusal = refused(id);
         if (refusal) return refusal;
