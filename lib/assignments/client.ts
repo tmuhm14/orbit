@@ -1,11 +1,15 @@
-import type { AssignmentState } from "./transitions";
 import type {
   Assignment,
+  AssignmentAvailability,
   AssignmentDetail,
   AssignmentErrorBody,
-  AssignmentErrorCode,
+  AssignmentRouteErrorCode,
+  AssignmentListItem,
   CreateAssignmentInput,
+  ListAssignmentsOptions,
   ReviewDecision,
+  SaveDocumentInput,
+  SaveDocumentResult,
 } from "./types";
 
 // Typed browser client for /api/assignments (same-origin, cookie session).
@@ -14,7 +18,7 @@ import type {
 
 export class AssignmentApiError extends Error {
   readonly status: number;
-  readonly code: AssignmentErrorCode | "network_error" | "unexpected_response";
+  readonly code: AssignmentRouteErrorCode | "network_error" | "unexpected_response";
   readonly body: AssignmentErrorBody | null;
   constructor(
     status: number,
@@ -69,14 +73,22 @@ export function assignmentsClient(fetcher: Fetch = (...args) => fetch(...args)) 
     create: (input: CreateAssignmentInput) =>
       post<{ assignment: Assignment }>(fetcher, "/api/assignments", input).then((r) => r.assignment),
 
-    list: (workspaceId: string, options: { states?: AssignmentState[]; limit?: number } = {}) => {
+    list: (workspaceId: string, options: ListAssignmentsOptions = {}) => {
       const query = new URLSearchParams({ workspaceId });
+      if (options.sourceNoteId) query.set("sourceNoteId", options.sourceNoteId);
       if (options.states?.length) query.set("state", options.states.join(","));
       if (options.limit) query.set("limit", String(options.limit));
-      return call<{ assignments: Assignment[] }>(fetcher, `/api/assignments?${query}`).then(
+      return call<{ assignments: AssignmentListItem[] }>(fetcher, `/api/assignments?${query}`).then(
         (r) => r.assignments,
       );
     },
+
+    /** Whether the built-in executor can run in the workspace (no key material). */
+    availability: (workspaceId: string) =>
+      call<AssignmentAvailability>(
+        fetcher,
+        `/api/assignments/availability?${new URLSearchParams({ workspaceId })}`,
+      ),
 
     get: (id: string) => call<AssignmentDetail>(fetcher, at(id)),
 
@@ -110,6 +122,14 @@ export function assignmentsClient(fetcher: Fetch = (...args) => fetch(...args)) 
         decision,
         ...(comment === undefined ? {} : { comment }),
       }),
+
+    /**
+     * Saves the accepted result as a document item. 409 `already_saved`
+     * (error.body.noteId) means it was saved before. The new note reaches
+     * useNotes on its next refresh.
+     */
+    saveDocument: (id: string, body: SaveDocumentInput) =>
+      post<SaveDocumentResult>(fetcher, at(id, "save-document"), body),
   };
 }
 

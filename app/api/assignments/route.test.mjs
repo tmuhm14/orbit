@@ -1,6 +1,7 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import * as transitions from "../../../lib/assignments/transitions.ts";
+import * as notesModule from "../../../lib/notes.ts";
 import { loadTs } from "../../../tests/load-ts.mjs";
 
 // Assignment routes with doubles for the Supabase client. The real
@@ -52,6 +53,8 @@ function from(table) {
     select: (columns) => (calls.push(["select", table, columns]), builder),
     eq: (column, value) => (filters.push((r) => column === "user_id" || r[column] === value), builder),
     in: (column, values) => (calls.push(["in", table, column, values]), filters.push((r) => values.includes(r[column])), builder),
+    not: (column, op, value) => (calls.push(["not", table, column, op, value]),
+      filters.push((r) => (op === "is" && value === null ? r[column] != null : true)), builder),
     order: () => builder,
     limit: () => builder,
     returns: async () => ({ data: tables[table].filter((r) => filters.every((f) => f(r))), error: null }),
@@ -91,7 +94,22 @@ const executorServer = loadTs(new URL("../../../lib/assignments/executor-server.
   "./executor": { EXECUTOR_WALL_CLOCK_MS: 240_000, executeAssignment: async () => ({ outcome: "skipped" }),
     materialFromRows: () => null, previousArtifactId: () => null },
 });
+// U-05: save-document and availability. The real fromRow() maps the note.
+const notesDb = loadTs(new URL("../../../lib/notes-db.ts", import.meta.url), { "./notes": notesModule });
+const documents = loadTs(new URL("../../../lib/assignments/documents.ts", import.meta.url), {
+  "@/lib/supabase/route-auth": routeAuth,
+  "@/lib/notes-db": notesDb,
+  "./server": server,
+});
+let adminClient, agentSettings;
+beforeEach(() => {
+  adminClient = { admin: true };
+  agentSettings = async () => ({ provider: "anthropic", model: "m", keyHint: "wxyz", autoTriage: true, apiKey: "sk-secret-key-wxyz" });
+});
 const imports = {
+  "@/lib/assignments/documents": documents,
+  "@/lib/supabase/admin": { createAdminClient: () => adminClient },
+  "@/lib/agent/server": { loadAgentSettings: (...args) => (calls.push(["settings", ...args]), agentSettings(...args)) },
   "next/server": { after: (callback) => afterCallbacks.push(callback) },
   "@/lib/supabase/route-auth": routeAuth,
   "@/lib/assignments/server": server,
@@ -114,6 +132,8 @@ const actions = {
   review: load("./[id]/review/route.ts"),
 };
 const kickoff = load("./kickoff/route.ts");
+const saveDocument = load("./[id]/save-document/route.ts");
+const availability = load("./availability/route.ts");
 
 const headers = (origin = ORIGIN) => ({ host: "localhost", ...(origin ? { origin } : {}) });
 async function send(handler, url, { method = "POST", body, origin, id, raw } = {}) {
@@ -345,4 +365,176 @@ test("kickoff: reaps, then schedules the oldest queued built-in assignment in th
   assert.equal((await ping({ workspaceId: WS })).status, 401);
   await runAfter();
   assert.equal(scheduled.length, 1);
+});
+
+// --- U-05: list filter and saved documents ----------------------------------------------
+
+const SAVED = "88888888-8888-4888-8888-888888888888";
+const PROJECT = "99999999-0000-4000-8000-000000000009";
+const OTHER = "12121212-1212-4212-8212-121212121212";
+const list = (query) => send(collection.GET, `/api/assignments?${query}`, { method: "GET" });
+
+test("list: optional sourceNoteId filter, validated as a uuid", async () => {
+  tables.assignments.push(row({ id: OTHER, source_note_id: CTX }));
+  const r = await list(`workspaceId=${WS}&sourceNoteId=${CTX}`);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.assignments.map((a) => a.id), [OTHER]);
+  assert.deepEqual((await list(`workspaceId=${WS}`)).body.assignments.map((a) => a.id).sort(), [ID, OTHER].sort());
+  for (const bad of ["x", "", NOTE.slice(0, -1), `${NOTE},${CTX}`])
+    assert.deepEqual((await list(`workspaceId=${WS}&sourceNoteId=${encodeURIComponent(bad)}`)).body.code, "invalid_payload", bad);
+});
+
+test("list and detail: each artifact's savedNoteId, null when not saved", async () => {
+  tables.assignments.push(row({ id: OTHER, state: "completed" }));
+  const artifact = (patch) => ({ assignment_id: ID, id: ART, attempt_id: "77777777-7777-4777-8777-777777777777", kind: "draft",
+    title: "T", content: { type: "doc" }, plain_text: "md", source_note_ids: [], saved_note_id: null, superseded_at: null,
+    created_at: "2026-10-14T00:00:00+00:00", ...patch });
+  tables.assignment_artifacts = [artifact({ saved_note_id: SAVED }), artifact({ assignment_id: OTHER, id: QID })];
+  const r = await list(`workspaceId=${WS}`);
+  assert.deepEqual(Object.fromEntries(r.body.assignments.map((a) => [a.id, a.savedNoteId])), { [ID]: SAVED, [OTHER]: null });
+  // Only the link columns are read for the list, never artifact content.
+  assert.equal(calls.find((c) => c[0] === "select" && c[1] === "assignment_artifacts")[2], "assignment_id,saved_note_id");
+  const d = await send(detail.GET, `/api/assignments/${ID}`, { method: "GET", id: ID });
+  assert.deepEqual(d.body.artifacts.map((a) => a.savedNoteId), [SAVED]);
+  tables.assignments = [];
+  calls = [];
+  assert.deepEqual((await list(`workspaceId=${WS}`)).body, { assignments: [] });
+  assert.equal(calls.some((c) => c[1] === "assignment_artifacts"), false, "no artifact read for an empty list");
+});
+
+const noteRow = (patch = {}) => ({
+  id: SAVED, workspace_id: WS, title: "Reply draft", content: { type: "doc", content: [] }, plain_text: "Dear vendor",
+  bucket: "reference", tags: [], source: "web", origin: { kind: "assignment", assignmentId: ID, artifactId: ART },
+  created_at: "2026-10-15T00:00:00.123456+00:00", updated_at: "2026-10-15T00:00:00.123456+00:00", completed_at: null,
+  due_date: null, revision: 1, kind: "document", project_id: PROJECT, waiting_on: null, waiting_for: null, next_check_on: null,
+  ...patch,
+});
+const saveDoc = (body, options = {}) =>
+  send(saveDocument.POST, `/api/assignments/${options.id ?? ID}/save-document`, { body, id: options.id ?? ID, ...options });
+
+test("save-document: passes the body through and returns 201 { note, assignment }", async () => {
+  rpcResult = () => ({ data: { status: "created", note: noteRow(), assignment: row({ state: "completed", revision: 6 }),
+    artifactId: ART }, error: null });
+  const r = await saveDoc({ expectedRevision: 6, artifactId: ART });
+  assert.equal(r.status, 201);
+  assert.deepEqual(Object.keys(r.body).sort(), ["assignment", "note"]);
+  assert.deepEqual(r.body.note, notesDb.fromRow(noteRow()), "the GET /api/notes shape");
+  assert.equal(notesModule.isNote(r.body.note), true, "current clients accept the note");
+  assert.equal(r.body.note.createdAt, "2026-10-15T00:00:00.123Z");
+  assert.deepEqual([r.body.note.kind, r.body.note.bucket, r.body.note.projectId, r.body.note.revision], ["document", "reference", PROJECT, 1]);
+  assert.deepEqual([r.body.assignment.state, r.body.assignment.revision], ["completed", 6]);
+  assert.equal(r.headers.get("cache-control"), "private, no-store");
+  await saveDoc({ expectedRevision: 6, artifactId: ART, projectId: null });
+  await saveDoc({ expectedRevision: 6, artifactId: ART, projectId: PROJECT, title: "  Vendor reply  " });
+  assert.deepEqual(rpcCalls().map((c) => [c[1], c[2]]), [
+    ["save_assignment_artifact_as_note", { p_id: ID, p_expected_revision: 6, p_artifact_id: ART, p_options: {} }],
+    ["save_assignment_artifact_as_note", { p_id: ID, p_expected_revision: 6, p_artifact_id: ART, p_options: { project_id: null } }],
+    ["save_assignment_artifact_as_note", { p_id: ID, p_expected_revision: 6, p_artifact_id: ART,
+      p_options: { project_id: PROJECT, title: "Vendor reply" } }],
+  ]);
+  await runAfter();
+  assert.deepEqual(scheduled, [], "saving never starts a run");
+});
+
+test("save-document: invalid bodies are 400; auth, origin and size as the other routes", async () => {
+  for (const body of [
+    {}, [], { artifactId: ART }, { expectedRevision: 0, artifactId: ART }, { expectedRevision: 1, artifactId: "x" },
+    { expectedRevision: 1, artifactId: ART, projectId: "x" }, { expectedRevision: 1, artifactId: ART, projectId: 5 },
+    { expectedRevision: 1, artifactId: ART, title: "" }, { expectedRevision: 1, artifactId: ART, title: "  " },
+    { expectedRevision: 1, artifactId: ART, title: "x".repeat(201) }, { expectedRevision: 1, artifactId: ART, title: null },
+    { expectedRevision: 1, artifactId: ART, kind: "note" }, { expectedRevision: 1, artifactId: ART, bucket: "next" },
+  ]) {
+    const r = await saveDoc(body);
+    assert.deepEqual([r.status, r.body], [400, { error: "Invalid request", code: "invalid_payload" }], JSON.stringify(body));
+  }
+  assert.equal((await saveDoc({ expectedRevision: 1, artifactId: ART }, { id: "x" })).status, 400);
+  assert.equal((await saveDoc(undefined, { raw: "{" })).status, 400);
+  const big = await saveDoc(undefined, { raw: JSON.stringify({ expectedRevision: 1, artifactId: ART, title: "x".repeat(40000) }) });
+  assert.deepEqual([big.status, big.body.code], [413, "payload_too_large"]);
+  for (const origin of [null, "https://evil.example"])
+    assert.deepEqual((await saveDoc({ expectedRevision: 1, artifactId: ART }, { origin })).body,
+      { error: "Forbidden", code: "forbidden_origin" });
+  signedIn = false;
+  assert.deepEqual((await saveDoc({ expectedRevision: 1, artifactId: ART })).status, 401);
+  assert.equal(rpcCalls().length, 0);
+});
+
+test("save-document: database results map to the error contract", async () => {
+  const cases = [
+    [{ status: "not_found" }, 404, { code: "not_found" }],
+    [{ status: "invalid_payload" }, 400, { code: "invalid_payload" }],
+    [{ status: "conflict", currentRevision: "7", state: "completed" }, 409, { code: "revision_conflict", currentRevision: 7, state: "completed" }],
+    [{ status: "invalid_transition", from: "needs_review", to: "completed", allowed: ["canceled", "completed", "queued"] }, 409,
+      { code: "invalid_transition", from: "needs_review", to: "completed", allowed: ["canceled", "completed", "queued"] }],
+    [{ status: "artifact_superseded" }, 409, { code: "artifact_superseded" }],
+    [{ status: "already_saved", noteId: SAVED }, 409, { code: "already_saved", noteId: SAVED }],
+    [{ status: "invalid", code: "invalid_project_link" }, 422, { code: "invalid_project_link" }],
+    [{ status: "invalid", code: "project_cycle" }, 422, { code: "project_cycle" }],
+    [{ status: "invalid", code: "project_depth_exceeded" }, 422, { code: "project_depth_exceeded" }],
+    [{ status: "invalid", code: "linked_item_move" }, 500, { code: "save_failed" }],
+    [{ status: "already_saved" }, 500, { code: "save_failed" }],
+    [{ status: "created", assignment: row() }, 500, { code: "save_failed" }],
+    [{ status: "saved", assignment: row() }, 500, { code: "save_failed" }],
+    [null, 500, { code: "save_failed" }],
+  ];
+  for (const [data, status, expected] of cases) {
+    rpcResult = () => ({ data, error: null });
+    const r = await saveDoc({ expectedRevision: 1, artifactId: ART, title: "Vendor invoice reply" });
+    assert.equal(r.status, status, JSON.stringify(data));
+    const { error: message, ...rest } = r.body;
+    assert.equal(typeof message, "string");
+    assert.deepEqual(rest, expected, JSON.stringify(data));
+    assert.doesNotMatch(JSON.stringify(r.body), /invoice|vendor/i, "no request content in errors");
+  }
+  rpcResult = () => ({ data: null, error: { message: "boom: Vendor invoice reply" } });
+  assert.deepEqual((await saveDoc({ expectedRevision: 1, artifactId: ART })).body,
+    { error: "Could not save the assignment", code: "save_failed" });
+});
+
+// --- U-05: availability ----------------------------------------------------------------
+
+const avail = (query = `workspaceId=${WS}`) =>
+  send(availability.GET, `/api/assignments/availability?${query}`, { method: "GET" });
+
+test("availability: each reason from the workspace switch and the saved key, never key material", async () => {
+  tables.workspaces = [{ id: WS, agent_enabled: true }];
+  const seen = [];
+  const check = async (expected) => {
+    const r = await avail();
+    assert.deepEqual([r.status, r.body], [200, expected]);
+    assert.equal(r.headers.get("cache-control"), "private, no-store");
+    seen.push(JSON.stringify(r.body));
+  };
+  await check({ available: true });
+  agentSettings = async () => null;
+  await check({ available: false, reason: "no_key" });
+  agentSettings = async () => ({ provider: "anthropic", model: "m", keyHint: "wxyz", autoTriage: true, apiKey: null });
+  await check({ available: false, reason: "key_unreadable" });
+  tables.workspaces = [{ id: WS, agent_enabled: false }];
+  calls = [];
+  await check({ available: false, reason: "agent_disabled" });
+  assert.equal(calls.some((c) => c[0] === "settings"), false, "the key isn't read for a disabled workspace");
+  for (const body of seen) assert.doesNotMatch(body, /sk-|secret|wxyz|anthropic|ciphertext|hint|provider|model/i);
+  // The key is read with the admin client, for the signed-in user only.
+  tables.workspaces = [{ id: WS, agent_enabled: true }];
+  calls = [];
+  await avail();
+  assert.deepEqual(calls.find((c) => c[0] === "settings"), ["settings", adminClient, USER]);
+});
+
+test("availability: owner-only, validated, and failures map to codes", async () => {
+  tables.workspaces = [{ id: "99999999-9999-4999-8999-999999999999", agent_enabled: true }];
+  const missing = await avail();
+  assert.deepEqual([missing.status, missing.body.code], [404, "not_found"]);
+  for (const query of ["", "workspaceId=x", `workspaceId=${WS.slice(1)}`])
+    assert.deepEqual((await avail(query)).body.code, "invalid_payload", query);
+  tables.workspaces = [{ id: WS, agent_enabled: true }];
+  agentSettings = async () => { throw new Error("db down sk-secret"); };
+  assert.deepEqual((await avail()).body, { error: "Could not load assignments", code: "load_failed" });
+  adminClient = null;
+  const unconfigured = await avail();
+  assert.deepEqual([unconfigured.status, unconfigured.body.code], [503, "not_configured"]);
+  signedIn = false;
+  const signedOut = await avail();
+  assert.deepEqual([signedOut.status, signedOut.body.code], [401, "unauthenticated"]);
 });

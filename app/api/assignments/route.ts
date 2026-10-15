@@ -20,8 +20,9 @@ import {
 export const maxDuration = 300;
 
 /**
- * The user's assignments in one workspace, newest first (ADR 003 §5). No
- * artifact content. Expired leases of the caller's assignments are reaped
+ * The user's assignments in one workspace, newest first (ADR 003 §5),
+ * optionally only those delegated from `sourceNoteId`. No artifact content;
+ * each row carries `savedNoteId`, the document saved from its result. Expired leases of the caller's assignments are reaped
  * first, so a stalled run shows as failed instead of running forever.
  */
 export async function GET(request: Request) {
@@ -29,7 +30,7 @@ export async function GET(request: Request) {
   if ("error" in auth) return authFailure(auth.error);
   const query = parseListQuery(new URL(request.url).searchParams);
   if (!query.ok) return assignmentError("invalid_payload");
-  const { workspaceId, states, limit } = query.value;
+  const { workspaceId, sourceNoteId, states, limit } = query.value;
   await auth.supabase.rpc("reap_own_assignment_leases").then(
     () => undefined,
     () => undefined,
@@ -47,13 +48,34 @@ export async function GET(request: Request) {
     .select(ASSIGNMENT_COLUMNS)
     .eq("workspace_id", workspaceId)
     .eq("user_id", auth.user.id);
+  if (sourceNoteId) select = select.eq("source_note_id", sourceNoteId);
   if (states) select = select.in("state", states);
   const { data, error } = await select
     .order("created_at", { ascending: false })
     .limit(limit)
     .returns<Record<string, unknown>[]>();
   if (error) return assignmentError("load_failed");
-  return json({ assignments: data.map(fromAssignmentRow) });
+  // The document saved from each accepted result (U-05). Only the accepted,
+  // current artifact of a completed assignment can be saved, so there is at
+  // most one per assignment.
+  const saved = new Map<string, string>();
+  if (data.length) {
+    const { data: artifacts, error: artifactError } = await auth.supabase
+      .from("assignment_artifacts")
+      .select("assignment_id,saved_note_id")
+      .eq("user_id", auth.user.id)
+      .in("assignment_id", data.map((row) => row.id as string))
+      .not("saved_note_id", "is", null)
+      .returns<{ assignment_id: string; saved_note_id: string }[]>();
+    if (artifactError) return assignmentError("load_failed");
+    for (const a of artifacts) saved.set(a.assignment_id, a.saved_note_id);
+  }
+  return json({
+    assignments: data.map((row) => ({
+      ...fromAssignmentRow(row),
+      savedNoteId: saved.get(row.id as string) ?? null,
+    })),
+  });
 }
 
 /**
