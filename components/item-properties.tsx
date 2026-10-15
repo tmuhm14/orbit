@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
-import { ChevronRight, Layers, Plus, X } from "lucide-react";
+import { ChevronRight, Layers, Plus, Sparkles, X } from "lucide-react";
 import {
   BUCKETS,
   ITEM_KINDS,
@@ -16,7 +16,12 @@ import {
 } from "@/lib/notes";
 import { defaultTimeZone, localToday } from "@/lib/reminders";
 import { FOLLOWUP_COPY, KIND_LABELS } from "@/lib/item-properties";
+import { isActiveState } from "@/lib/assignment-view";
+import { AssignmentDetailDialog } from "./assignment-detail";
+import { AssignmentChip } from "./assignment-status";
+import { DelegateDialog } from "./delegate-dialog";
 import { ProjectPicker } from "./project-picker";
+import { useItemAssignment } from "./use-assignment";
 import { ReminderControl } from "./reminder-control";
 import type { useNotes } from "./use-notes";
 
@@ -273,5 +278,91 @@ export function ProjectContents({
         </ul>
       )}
     </section>
+  );
+}
+
+/**
+ * "Agent" row: the item's current assignment as a status chip (opens the
+ * detail) and a Delegate action while nothing is active. Any kind can be
+ * delegated. Dialogs stack above the editor.
+ */
+export function AssignmentField({
+  note,
+  api,
+  onOpenNote,
+  onOpenSettings,
+  onOpenAgent,
+}: {
+  note: Note;
+  api: ItemApi;
+  onOpenNote: (id: string) => void;
+  onOpenSettings?: () => void;
+  onOpenAgent?: () => void;
+}) {
+  const id = useId();
+  const { assignment, loaded, adopt, refresh } = useItemAssignment(note.workspaceId, note.id);
+  const [delegating, setDelegating] = useState(false);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const active = !!assignment && isActiveState(assignment.state);
+  const canDelegate = !!note.workspaceId;
+  return (
+    <>
+      <span id={`${id}-label`}>Agent</span>
+      <div className="property-control">
+        <div className="assignment-row" role="group" aria-labelledby={`${id}-label`}>
+          {assignment && <AssignmentChip state={assignment.state} onOpen={() => setDetailId(assignment.id)} />}
+          {!active && (
+            <button
+              type="button"
+              className="text-button property-add delegate-button"
+              aria-haspopup="dialog"
+              disabled={!loaded || !canDelegate}
+              onClick={() => setDelegating(true)}
+            >
+              <Sparkles size={13} aria-hidden="true" />
+              {assignment ? "Delegate again" : "Delegate"}
+            </button>
+          )}
+        </div>
+        {!canDelegate && <p className="property-hint">Move this item into a space to delegate it.</p>}
+      </div>
+      {delegating && (
+        <DelegateDialog
+          note={note}
+          notes={api.notes}
+          onClose={() => setDelegating(false)}
+          onCreated={(created) => {
+            adopt(created);
+            setDelegating(false);
+            setDetailId(created.id);
+          }}
+          onOpenAssignment={(existing) => {
+            setDelegating(false);
+            setDetailId(existing);
+          }}
+          onOpenSettings={onOpenSettings}
+          onOpenAgent={onOpenAgent}
+        />
+      )}
+      {detailId && (
+        <AssignmentDetailDialog
+          key={detailId}
+          assignmentId={detailId}
+          notes={api.notes}
+          onClose={() => {
+            setDetailId(null);
+            void refresh();
+          }}
+          onChange={adopt}
+          onOpenNote={(target) => {
+            setDetailId(null);
+            if (target !== note.id) onOpenNote(target);
+          }}
+          onOpenAssignment={setDetailId}
+          onOpenSettings={onOpenSettings}
+          onOpenAgent={onOpenAgent}
+        />
+      )}
+    </>
   );
 }
