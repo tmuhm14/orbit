@@ -228,6 +228,8 @@ export type TimelineEntry = {
   title: string;
   /** Executor- or user-written text; render as plain text only. */
   text?: string;
+  /** A note the entry links to (artifact_saved: the saved document). */
+  noteId?: string;
 };
 
 const DECISION_LABELS = { accept: "You accepted the result", request_changes: "You asked for changes", reject: "You declined the result" } as const;
@@ -270,6 +272,12 @@ export function timelineEntries(
   const entries: TimelineEntry[] = [];
   for (const event of detail.events) {
     const base = { id: event.id, at: event.createdAt };
+    // U-05 event, not yet in AssignmentEventType: { artifactId, noteId }.
+    if ((event.type as string) === "artifact_saved") {
+      const noteId = str(event.payload.noteId);
+      entries.push({ ...base, tone: "good", title: "Saved as a document", ...(noteId ? { noteId } : {}) });
+      continue;
+    }
     switch (event.type) {
       case "state_changed": {
         const { title, tone } = stateTitle(event);

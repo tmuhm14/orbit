@@ -422,6 +422,12 @@ export function AssignmentDetailDialog({
                   <div>
                     <strong>{entry.title}</strong>
                     {entry.text && <p className="assignment-untrusted">{entry.text}</p>}
+                    {entry.noteId && (
+                      <button type="button" className="assignment-link" onClick={() => onOpenNote(entry.noteId!)}>
+                        {itemTitle(byId.get(entry.noteId))}
+                        <ArrowUpRight size={13} aria-hidden="true" />
+                      </button>
+                    )}
                     <time dateTime={entry.at}>{when(entry.at)}</time>
                   </div>
                 </li>

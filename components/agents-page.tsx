@@ -4,6 +4,7 @@ import { useId, useMemo } from "react";
 import { ChevronRight, History, Hourglass, LoaderCircle, Sparkles } from "lucide-react";
 import type { Assignment } from "@/lib/assignments/types";
 import type { Note } from "@/lib/notes";
+import type { AssignmentListItem } from "@/lib/assignment-api";
 import { failureCopy, itemTitle } from "@/lib/assignment-view";
 import {
   HISTORY_FILTERS,
@@ -50,6 +51,9 @@ function AgentRow({
             <AssignmentStateBadge state={assignment.state} />
             <small>{rowTimes(assignment, now)}</small>
           </span>
+          {(assignment as AssignmentListItem).savedNoteId && (
+            <span className="agent-row-saved">Saved as a document</span>
+          )}
           {assignment.state === "failed" && (
             <span className="agent-row-why">{failureCopy(assignment.errorCode)}</span>
           )}

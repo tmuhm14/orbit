@@ -44,6 +44,9 @@ async function call<T>(fetcher: Fetch, path: string, init?: RequestInit): Promis
   return body as T;
 }
 
+/** A list row: no artifacts, but whether the accepted result was saved (U-05). */
+export type AssignmentListItem = Assignment & { savedNoteId?: string | null };
+
 export type ListOptions = {
   sourceNoteId?: string;
   states?: readonly AssignmentState[];
@@ -58,7 +61,7 @@ export function assignmentApi(fetcher: Fetch = (...args) => fetch(...args)) {
       if (options.sourceNoteId) query.set("sourceNoteId", options.sourceNoteId);
       if (options.states?.length) query.set("state", options.states.join(","));
       if (options.limit) query.set("limit", String(options.limit));
-      return call<{ assignments: Assignment[] }>(fetcher, `/api/assignments?${query}`).then(
+      return call<{ assignments: AssignmentListItem[] }>(fetcher, `/api/assignments?${query}`).then(
         (r) => r.assignments,
       );
     },

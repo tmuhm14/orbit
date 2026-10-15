@@ -4786,6 +4786,7 @@ main.agents-page { max-width: 980px; padding-top: 40px; padding-bottom: 80px; di
 .agent-row-source { font-size: 12px; color: #b0a4bb; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .agent-row-meta small { font-size: 11px; color: #8c7f98; }
+.agent-row-saved { font-size: 12px; color: #bfd5ca; }
 .agent-row-why { font-size: 12px; line-height: 1.5; color: #e9b9a8; }
 .agent-row-go { display: inline-flex; align-items: center; gap: 4px; flex: none; font-size: 12px; color: #c9b6ee; }
 .agents-filter { display: flex; flex-wrap: wrap; gap: 6px; }
