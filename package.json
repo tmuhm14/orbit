@@ -10,7 +10,7 @@
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/notes.test.mjs tests/slack.test.mjs tests/email.test.mjs tests/agent.test.mjs lib/scheduled/schedule.test.mjs lib/integrations/*.test.mjs scripts/orbit-mcp.test.mjs lib/due-items.test.mjs lib/item-actions.test.mjs lib/notes.test.mjs lib/notes-db.test.mjs lib/agent/server.test.mjs app/api/notes/route.test.mjs 'app/api/agent/actions/*/undo/route.test.mjs' supabase/tests/note-functions.test.mjs lib/home-items.test.mjs app/api/agent/runs/route.test.mjs 'app/api/scheduler/tick/*/route.test.mjs' supabase/tests/note-projects.test.mjs",
+    "test": "node --experimental-strip-types --test \"{app,lib,scripts,supabase,tests}/**/*.test.mjs\"",
     "mcp": "node scripts/orbit-mcp.mjs"
   },
   "dependencies": {
