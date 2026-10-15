@@ -1,16 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   BUCKETS,
   createNote,
+  itemKind,
   type Note,
   type BucketId,
   workspaceColor,
   type SlackConnection,
   type Workspace as WorkspaceInfo,
 } from "@/lib/notes";
+import { ConflictNotice, ReloadBanner } from "./conflict-banner";
 import { ScheduledAudit } from "./scheduled-audit";
 import { SettingsContent } from "./settings-content";
 import { useItemActions } from "./use-item-actions";
@@ -20,7 +22,12 @@ import { useSessionWatch } from "./use-session-watch";
 import { useWorkspaces } from "./use-workspaces";
 import { useWorkspaceShortcuts } from "./use-workspace-shortcuts";
 import { spaceStyle } from "./workspace-switcher";
-import { WorkspaceDialogs, useToast, useWorkspaceDialogs } from "./workspace-dialogs";
+import {
+  WorkspaceDialogs,
+  useToast,
+  useWorkspaceDialogs,
+  type ProjectDelete,
+} from "./workspace-dialogs";
 import { WorkspaceMain } from "./workspace-main";
 import {
   WorkspaceShellProvider,
@@ -59,6 +66,7 @@ export function Workspace({
   const pathname = usePathname();
   const settingsPage = pathname === "/settings";
   const scheduledPage = pathname === "/scheduled";
+  const notesApi = useNotes(userId, initialNotes);
   const {
     notes,
     setNotes,
@@ -69,7 +77,11 @@ export function Workspace({
     dismissBrowserNotes,
     importBrowserNotes,
     refresh,
-  } = useNotes(userId, initialNotes);
+    conflicts,
+    deleteConflictIds,
+    dismissDeleteConflicts,
+    blockedDeletes,
+  } = notesApi;
   const sessionExpired = useSessionWatch(userId);
   const spaces = useWorkspaces(initialWorkspaces, initialSlack);
   const workspaceId = spaces.current.id;
@@ -79,6 +91,16 @@ export function Workspace({
   const [tagFilter, setTagFilter] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toast, setToast] = useToast();
+  // A project delete the user started here (it has linked items locally).
+  // Deletes the server refused arrive through blockedDeletes instead.
+  const [localProjectDelete, setLocalProjectDelete] = useState<ProjectDelete | null>(null);
+  const projectDelete = localProjectDelete ?? blockedDeletes[0] ?? null;
+  const conflictIds = useMemo(() => new Set(conflicts.map((c) => c.id)), [conflicts]);
+  useEffect(() => {
+    if (!deleteConflictIds.length) return;
+    setToast("This note was changed elsewhere and was not deleted.");
+    dismissDeleteConflicts();
+  }, [deleteConflictIds, dismissDeleteConflicts, setToast]);
   const dialogs = useWorkspaceDialogs(initialSearchOpen);
   const capture = useQuickCapture({ setNotes, workspaceId, onToast: setToast });
   const items = useItemActions({ notes, setNotes, workspaceId, showToast: setToast });
@@ -91,7 +113,7 @@ export function Workspace({
     }
   }, [initialSearchOpen, settingsPage, setSearchOpen]);
   useWorkspaceShortcuts({
-    disabled: !!selected,
+    disabled: !!selected || !!projectDelete,
     onSearch: openSearch,
     onCapture: capture.focus,
     onEscape: () => {
@@ -184,19 +206,32 @@ export function Workspace({
       ),
     );
   }
+  function deleteSelected() {
+    const id = selected;
+    if (!id) return;
+    const note = notes.find((n) => n.id === id);
+    const linked = note && itemKind(note) === "project" ? notesApi.childrenOf(id).length : 0;
+    if (linked) {
+      setLocalProjectDelete({ id, count: linked });
+      return;
+    }
+    notesApi.deleteNote(id);
+    setSelected(null);
+    setToast("Note deleted");
+  }
+  function confirmProjectDelete(id: string) {
+    setLocalProjectDelete(null);
+    notesApi.deleteNote(id, { unlinkChildren: true });
+    if (selected === id) setSelected(null);
+    setToast("Project deleted. Its items moved up a level.");
+  }
+  function cancelProjectDelete(id: string) {
+    if (localProjectDelete?.id === id) setLocalProjectDelete(null);
+    else notesApi.dismissBlockedDelete(id);
+  }
   function exportNotes() {
     const file = new Blob(
-      [
-        JSON.stringify(
-          {
-            version: 1,
-            exportedAt: new Date().toISOString(),
-            notes,
-          },
-          null,
-          2,
-        ),
-      ],
+      [JSON.stringify(notesApi.exportData(), null, 2)],
       { type: "application/json" },
     );
     const url = URL.createObjectURL(file);
@@ -235,6 +270,7 @@ export function Workspace({
     openGuide: () => dialogs.setGuideOpen(true),
     showToast: setToast,
     items,
+    conflictIds,
   };
   if (sessionExpired)
     return (
@@ -242,7 +278,8 @@ export function Workspace({
         Returning to sign in…
       </div>
     );
-  const covered = !!currentNote || dialogs.anyOpen;
+  const covered = !!currentNote || dialogs.anyOpen || !!projectDelete;
+  const closedConflicts = conflicts.filter((c) => c.id !== selected);
   return (
     <WorkspaceShellProvider value={shell}>
       <div
@@ -263,6 +300,23 @@ export function Workspace({
             onOpenScheduled={() => dialogs.setScheduledOpen(true)}
             onOpenAgent={() => dialogs.setAgentOpen(true)}
           />
+          {(notesApi.reloadRequired || closedConflicts.length > 0) && (
+            <div className="sync-notices">
+              {notesApi.reloadRequired && <ReloadBanner />}
+              <ConflictNotice
+                conflicts={closedConflicts}
+                onOpen={setSelected}
+                onRestore={(id) => {
+                  notesApi.takeTheirs(id);
+                  setToast("Note restored");
+                }}
+                onKeepDeleted={(id) => {
+                  notesApi.keepMine(id);
+                  setToast("Note deleted");
+                }}
+              />
+            </div>
+          )}
           {scheduledPage ? <ScheduledAudit onOpenScheduled={() => dialogs.setScheduledOpen(true)} refreshToken={dialogs.scheduledRefreshToken} /> : settingsPage ? <SettingsContent
             email={email}
             workspaces={spaces.workspaces}
@@ -287,6 +341,11 @@ export function Workspace({
         <WorkspaceDialogs
           dialogs={dialogs}
           currentNote={currentNote}
+          api={notesApi}
+          projectDelete={projectDelete}
+          onConfirmProjectDelete={confirmProjectDelete}
+          onCancelProjectDelete={cancelProjectDelete}
+          onOpenNote={setSelected}
           workspaces={spaces.workspaces}
           currentWorkspace={spaces.current}
           workspaceNotes={workspaceNotes}
@@ -298,11 +357,7 @@ export function Workspace({
           toast={toast}
           onToast={setToast}
           onUpdateNote={updateNote}
-          onDeleteNote={() => {
-            setNotes((n) => n.filter((item) => item.id !== selected));
-            setSelected(null);
-            setToast("Note deleted");
-          }}
+          onDeleteNote={deleteSelected}
           onCloseNote={() => setSelected(null)}
           onToggleAgent={(enabled) => spaces.setAgentEnabled(workspaceId, enabled)}
           onAgentNotesChanged={() => void refresh()}

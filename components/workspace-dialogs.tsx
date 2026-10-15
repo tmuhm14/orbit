@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { useRouter } from "next/navigation";
-import { Check } from "lucide-react";
+import { Check, Layers } from "lucide-react";
 import type { Note, Workspace as WorkspaceInfo } from "@/lib/notes";
 import { AgentDialog } from "./agent-dialog";
 import { GuideDialog } from "./guide-dialog";
+import type { ItemApi } from "./item-properties";
 import { NoteEditor } from "./note-editor";
 import { ScheduledDialog } from "./scheduled-dialog";
 import { SearchDialog } from "./search-dialog";
@@ -56,10 +57,99 @@ export function useToast() {
   return [toast, setToast] as const;
 }
 
+/** A project delete waiting for the user's answer. */
+export type ProjectDelete = { id: string; count: number };
+
+/**
+ * "This project has N linked items. Move them up a level and delete?"
+ * Focus starts on Cancel, stays inside the dialog, and Escape cancels.
+ */
+function ProjectDeleteDialog({
+  pending,
+  title,
+  onConfirm,
+  onCancel,
+}: {
+  pending: ProjectDelete;
+  title: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const prior = document.activeElement as HTMLElement | null;
+    cancelRef.current?.focus();
+    return () => {
+      if (prior?.isConnected) prior.focus();
+    };
+  }, []);
+  const items = pending.count === 1 ? "1 linked item" : `${pending.count} linked items`;
+  return (
+    <div
+      className="modal-backdrop confirm-backdrop"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onCancel();
+      }}
+    >
+      <div
+        ref={ref}
+        className="confirm-dialog"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="project-delete-title"
+        aria-describedby="project-delete-body"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.stopPropagation();
+            onCancel();
+          }
+          if (e.key !== "Tab") return;
+          const buttons = ref.current?.querySelectorAll<HTMLElement>("button:not([disabled])");
+          if (!buttons?.length) return;
+          const first = buttons[0];
+          const last = buttons[buttons.length - 1];
+          if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }}
+      >
+        <span className="confirm-icon" aria-hidden="true">
+          <Layers size={18} />
+        </span>
+        <h2 id="project-delete-title">Delete “{title}”?</h2>
+        <p id="project-delete-body">
+          This project has {items}. Move {pending.count === 1 ? "it" : "them"} up a level and delete?
+        </p>
+        <p className="confirm-hint">
+          They’ll join the parent project, or stand on their own if there isn’t one. Nothing else is deleted.
+        </p>
+        <div className="confirm-actions">
+          <button ref={cancelRef} type="button" className="text-button" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className="danger-button" onClick={onConfirm}>
+            Move items and delete
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Renders the note editor, dialogs and toast on top of the shell. */
 export function WorkspaceDialogs({
   dialogs,
   currentNote,
+  api,
+  projectDelete,
+  onConfirmProjectDelete,
+  onCancelProjectDelete,
+  onOpenNote,
   workspaces,
   currentWorkspace,
   workspaceNotes,
@@ -78,6 +168,11 @@ export function WorkspaceDialogs({
 }: {
   dialogs: WorkspaceDialogsState;
   currentNote: Note | undefined;
+  api: ItemApi;
+  projectDelete: ProjectDelete | null;
+  onConfirmProjectDelete: (id: string) => void;
+  onCancelProjectDelete: (id: string) => void;
+  onOpenNote: (id: string) => void;
   workspaces: WorkspaceInfo[];
   currentWorkspace: WorkspaceInfo;
   workspaceNotes: Note[];
@@ -102,10 +197,23 @@ export function WorkspaceDialogs({
           key={currentNote.id}
           note={currentNote}
           workspaces={workspaces}
+          api={api}
           onUpdate={onUpdateNote}
           onClose={onCloseNote}
           onDelete={onDeleteNote}
+          onOpenNote={onOpenNote}
+          onToast={onToast}
           storageError={storageError}
+        />
+      )}
+      {projectDelete && (
+        <ProjectDeleteDialog
+          // Not the bare id: the editor for the same note is a sibling.
+          key={`delete-${projectDelete.id}`}
+          pending={projectDelete}
+          title={api.notes.find((n) => n.id === projectDelete.id)?.title.trim() || "Untitled project"}
+          onConfirm={() => onConfirmProjectDelete(projectDelete.id)}
+          onCancel={() => onCancelProjectDelete(projectDelete.id)}
         />
       )}
       {dialogs.searchOpen && (

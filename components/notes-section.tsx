@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import {
+  AlertTriangle,
   CheckCircle2,
   ChevronRight,
   LayoutGrid,
@@ -62,7 +63,15 @@ export function NotesSection() {
     openNote,
     newNote,
     items: { moveNoteToBucket },
+    conflictIds,
   } = useWorkspaceShell();
+  const changedBadge = (id: string) =>
+    conflictIds.has(id) && (
+      <span className="conflict-badge" title="Changed somewhere else. Open it to choose a version.">
+        <AlertTriangle size={11} aria-hidden="true" />
+        Changed elsewhere
+      </span>
+    );
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [sort, setSort] = useState<Sort>("newest");
   const [layout, setLayout] = useState<"list" | "grid">("list");
@@ -201,7 +210,7 @@ export function NotesSection() {
                     >
                       <span className="bucket-group-grip" aria-hidden="true">⋮⋮</span>
                       <button className="bucket-group-open" onClick={() => openNote(note.id)}>
-                        <strong>{note.title || "Untitled thought"}</strong>
+                        <strong>{note.title || "Untitled thought"}{changedBadge(note.id)}</strong>
                         <span>{note.plainText || "A new thought, ready to take shape."}</span>
                       </button>
                       <select
@@ -248,7 +257,7 @@ export function NotesSection() {
                     )}
                   </span>
                   <div>
-                    <strong>{note.title || "Untitled thought"}</strong>
+                    <strong>{note.title || "Untitled thought"}{changedBadge(note.id)}</strong>
                     <p>
                       {note.plainText ||
                         "A new thought, ready to take shape."}
