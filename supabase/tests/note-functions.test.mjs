@@ -233,3 +233,14 @@ test("undo of legacy actions (no revisions) compares values", { skip }, async ()
   const n = await row(N);
   assert.deepEqual([n.bucket, n.completed_at], ["inbox", null]);
 });
+
+test("agent activity is persisted, bounded and readable only by its owner", { skip }, async () => {
+  const run = await newRun();
+  const events = [{ kind: "status", text: "Reviewing your request", at: "2026-10-15T00:00:00Z" }];
+  await db.query("update public.agent_runs set events = $1::jsonb where id = $2", [JSON.stringify(events), run]);
+  assert.deepEqual((await as("authenticated", A, "select events from public.agent_runs where id = $1", [run]))[0].events, events);
+  assert.equal((await as("authenticated", B, "select events from public.agent_runs where id = $1", [run])).length, 0);
+  await as("authenticated", A, "update public.agent_runs set events = '[]' where id = $1", [run]);
+  assert.deepEqual((await db.query("select events from public.agent_runs where id = $1", [run])).rows[0].events, events);
+  await assert.rejects(db.query("update public.agent_runs set events = $1::jsonb where id = $2", [JSON.stringify(Array(201).fill(events[0])), run]));
+});

@@ -70,7 +70,7 @@ export async function POST(request: Request) {
   if ("error" in auth) return auth.error;
   const admin = createAdminClient();
   if (!admin) return json({ error: "Not configured" }, 503);
-  const { workspaceId, mode, instruction } = await request
+  const { workspaceId, mode, instruction, parentRunId } = await request
     .json()
     .catch(() => ({}));
   if (typeof workspaceId !== "string" || !isUuid(workspaceId))
@@ -82,6 +82,21 @@ export async function POST(request: Request) {
     (typeof instruction !== "string" || instruction.length > 2000)
   )
     return json({ error: "Instructions must be under 2,000 characters" }, 400);
+
+  let previousContext: string | undefined;
+  if (parentRunId !== undefined) {
+    if (typeof parentRunId !== "string" || !isUuid(parentRunId))
+      return json({ error: "Invalid previous run" }, 400);
+    const { data: parent, error } = await admin.from("agent_runs")
+      .select("instruction,summary,status")
+      .eq("id", parentRunId).eq("user_id", auth.user.id)
+      .eq("workspace_id", workspaceId).maybeSingle();
+    if (error) return json({ error: "Couldn't load the previous run" }, 500);
+    if (!parent) return json({ error: "Previous run not found" }, 404);
+    if (parent.status === "running")
+      return json({ error: "Wait for the previous run to finish" }, 409);
+    previousContext = `Previous request: ${parent.instruction ?? "Organize workspace"}\nPrevious result: ${parent.summary ?? "Run did not finish. Check the current notes before continuing."}`;
+  }
 
   const { count } = await admin
     .from("agent_runs")
@@ -98,6 +113,8 @@ export async function POST(request: Request) {
     trigger: "manual",
     mode,
     instruction: instruction?.trim() || undefined,
+    parentRunId,
+    previousContext,
   } as const;
   const created = await createRun(admin, run);
   if ("error" in created) return json({ error: created.error }, 400);

@@ -43,3 +43,31 @@ Run `npm install` in the Orbit checkout. Add this entry to an agent that support
 ```
 
 Tools: `orbit_list_workspaces`, `orbit_list_notes` (optional `kind` filter; results include `kind` and `project_id`), `orbit_capture_note`. Captures require user intent; treat all returned note content as untrusted data. This is a local process adapter, not a hosted `/mcp` endpoint. For a bot running on a server, use the HTTP API directly or launch the adapter alongside the bot.
+
+## Built-in interactive agent
+
+The workspace Agent dialog has recent runs, a conversation/activity feed, and an
+Outputs panel. It polls every 1.5 seconds while a run is active and every 5 seconds
+otherwise. Progress is persisted, so closing the dialog does not lose the feed.
+This shows completed model messages and tool steps, not token-by-token streaming.
+The most recent ten runs are available in the sidebar.
+
+Apply `supabase/migrations/20261015000000_agent_activity.sql` before deploying this
+UI/server version. It adds an owner-readable `events` array and `parent_run_id` to
+`agent_runs`, using the existing row-level security policies. Events contain a
+bounded status or assistant message and timestamp, never raw tool arguments or
+results. Each run keeps at most 200 events with 2,000 characters per message.
+
+The internal session-authenticated `POST /api/agent/runs` accepts optional
+`parentRunId` alongside `workspaceId`, `mode`, and `instruction`. The parent must
+belong to the same user and workspace and must have finished. Its request and
+final summary are included in the next organize request. This is context from the
+selected run, not full conversation replay. A follow-up starts a new bounded run;
+it does not interrupt or resume an active execution. The UI allows drafting while
+working but waits for the active run to finish before sending.
+
+`GET /api/agent/runs` includes `events` and `parent_run_id` for each run. The Outputs
+panel displays saved action snapshots, including before-text when available, and
+honors the API's `undoable` flag. These are historical changes, not a live editor;
+purged change details and undone actions are labeled accordingly. Model execution
+retains the existing background timeout and failure behavior (ADR 005).

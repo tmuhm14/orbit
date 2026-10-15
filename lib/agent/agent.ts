@@ -381,6 +381,12 @@ export async function executeTool(
   }
 }
 
+export type AgentProgress = {
+  kind: "status" | "message" | "tool";
+  text: string;
+  at: string;
+};
+
 export type AgentResult = { summary: string; changes: number; steps: number };
 
 export async function runAgent({
@@ -390,6 +396,7 @@ export async function runAgent({
   task,
   maxSteps = 16,
   maxWrites = 60,
+  onProgress,
 }: {
   provider: ModelProvider;
   store: AgentStore;
@@ -397,11 +404,15 @@ export async function runAgent({
   task: string;
   maxSteps?: number;
   maxWrites?: number;
+  onProgress?: (event: AgentProgress) => Promise<void>;
 }): Promise<AgentResult> {
   const system = agentSystemPrompt(workspaceName);
   const messages: AgentMessage[] = [{ role: "user", text: task }];
   const budget: ToolBudget = { writes: 0, maxWrites };
+  const progress = async (kind: AgentProgress["kind"], text: string) =>
+    onProgress?.({ kind, text: text.slice(0, 2000), at: new Date().toISOString() });
   for (let step = 1; step <= maxSteps; step++) {
+    await progress("status", step === 1 ? "Reviewing your request" : "Planning the next step");
     const turn = await provider.chat({ system, messages, tools: AGENT_TOOLS });
     if (!turn.calls.length)
       return {
@@ -409,13 +420,20 @@ export async function runAgent({
         changes: budget.writes,
         steps: step,
       };
+    if (turn.text) await progress("message", turn.text);
     messages.push({ role: "assistant", text: turn.text, calls: turn.calls });
     const results = [];
-    for (const call of turn.calls)
+    for (const call of turn.calls) {
+      const labels: Record<string, string> = {
+        list_notes: "Finding relevant notes", get_note: "Reading a note",
+        update_note: "Updating a note", create_note: "Creating an output",
+      };
+      await progress("tool", labels[call.name] ?? "Using a tool");
       results.push({
         id: call.id,
         content: await executeTool(store, call, budget),
       });
+    }
     messages.push({ role: "tool", results });
   }
   return {

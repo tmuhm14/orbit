@@ -119,6 +119,7 @@ export function WorkspaceDialogs({
       {dialogs.guideOpen && <GuideDialog onClose={() => dialogs.setGuideOpen(false)} />}
       {dialogs.agentOpen && (
         <AgentDialog
+          key={currentWorkspace.id}
           workspace={currentWorkspace}
           notes={workspaceNotes}
           available={agentAvailable}

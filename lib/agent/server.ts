@@ -12,6 +12,7 @@ import {
   runAgent,
   triageTask,
   type AgentNoteDetail,
+  type AgentProgress,
   type AgentStore,
   type NoteChanges,
   type StoreRefusal,
@@ -36,7 +37,7 @@ export type AgentSettings = {
 };
 export type AgentMode = "triage" | "organize";
 export const RUN_COLUMNS =
-  "id,workspace_id,trigger,mode,instruction,provider,model,status,summary,error,created_at,finished_at";
+  "id,workspace_id,trigger,mode,instruction,provider,model,status,summary,error,created_at,finished_at,events,parent_run_id";
 /** Runs still "running" after this long were cut off by the platform. */
 export const RUN_TIMEOUT_MS = 6 * 60_000;
 
@@ -302,6 +303,8 @@ type RunRequest = {
   mode: AgentMode;
   instruction?: string;
   noteIds?: string[];
+  parentRunId?: string;
+  previousContext?: string;
 };
 
 /**
@@ -333,6 +336,7 @@ export async function createRun(
       trigger: request.trigger,
       mode: request.mode,
       instruction: request.instruction || null,
+      parent_run_id: request.parentRunId || null,
       provider: settings.provider,
       model: settings.model,
     })
@@ -362,6 +366,7 @@ export async function executeRun(
       .eq("user_id", request.userId)
       .single<{ name: string }>();
     if (!settings?.apiKey || !workspace) throw new Error("Run setup missing");
+    const events: AgentProgress[] = [];
     const result = await runAgent({
       provider: createProvider(
         settings.provider,
@@ -370,10 +375,19 @@ export async function executeRun(
       ),
       store: supabaseAgentStore(admin, { ...request, runId }),
       workspaceName: workspace.name,
+      onProgress: async (event) => {
+        events.push(event);
+        const { error } = await admin.from("agent_runs")
+          .update({ events: events.slice(-200) })
+          .eq("id", runId).eq("user_id", request.userId).eq("status", "running");
+        if (error) throw new Error("Could not save progress");
+      },
       task:
         request.mode === "triage"
           ? triageTask(request.noteIds)
-          : organizeTask(request.instruction),
+          : organizeTask(request.previousContext
+              ? `${request.previousContext}\n\nFollow-up request: ${request.instruction ?? "Continue"}`
+              : request.instruction),
     });
     // Captures the agent looked at but left alone are still triaged.
     if (request.noteIds?.length)
