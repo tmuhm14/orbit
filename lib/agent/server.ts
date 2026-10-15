@@ -84,6 +84,9 @@ type NoteRow = {
   revision: number;
   kind: ItemKind;
   project_id: string | null;
+  waiting_on: string | null;
+  waiting_for: string | null;
+  next_check_on: string | null;
 };
 
 /** Keeps a search term to words so it can't alter the PostgREST filter. */
@@ -106,6 +109,9 @@ function changedValues(row: NoteRow, changes: NoteChanges) {
   if (changes.bucket !== undefined) set("bucket", changes.bucket);
   if (changes.kind !== undefined) set("kind", changes.kind);
   if (changes.projectId !== undefined) set("project_id", changes.projectId);
+  if (changes.waitingOn !== undefined) set("waiting_on", changes.waitingOn);
+  if (changes.waitingFor !== undefined) set("waiting_for", changes.waitingFor);
+  if (changes.nextCheckOn !== undefined) set("next_check_on", changes.nextCheckOn);
   if (changes.tags !== undefined) set("tags", changes.tags);
   if (changes.completed !== undefined)
     set(
@@ -150,7 +156,7 @@ export function supabaseAgentStore(
     admin
       .from("notes")
       .select(
-        "id,title,bucket,tags,source,plain_text,content,origin,created_at,completed_at,triage_status,revision,kind,project_id",
+        "id,title,bucket,tags,source,plain_text,content,origin,created_at,completed_at,triage_status,revision,kind,project_id,waiting_on,waiting_for,next_check_on",
       )
       .eq("user_id", scope.userId)
       .eq("workspace_id", scope.workspaceId);
@@ -160,6 +166,9 @@ export function supabaseAgentStore(
     bucket: row.bucket,
     kind: row.kind ?? "note",
     projectId: row.project_id ?? null,
+    waitingOn: row.waiting_on ?? null,
+    waitingFor: row.waiting_for ?? null,
+    nextCheckOn: row.next_check_on ?? null,
     tags: row.tags,
     source: row.source,
     createdAt: row.created_at,
@@ -218,7 +227,13 @@ export function supabaseAgentStore(
       if (error) throw new Error("Could not list notes");
       return data.map(({ plain_text, revision, ...row }) => {
         seen.set(row.id, revision);
-        const { text: _text, origin: _origin, ...summary } = detail({
+        const {
+          text: _text,
+          origin: _origin,
+          waitingOn: _waitingOn,
+          waitingFor: _waitingFor,
+          ...summary
+        } = detail({
           ...row,
           plain_text,
           revision,
@@ -279,6 +294,9 @@ export function supabaseAgentStore(
           tags: [...new Set([...note.tags, "agent"])],
           ...(note.kind ? { kind: note.kind } : {}),
           ...(note.projectId ? { project_id: note.projectId } : {}),
+          ...(note.waitingOn ? { waiting_on: note.waitingOn } : {}),
+          ...(note.waitingFor ? { waiting_for: note.waitingFor } : {}),
+          ...(note.nextCheckOn ? { next_check_on: note.nextCheckOn } : {}),
         },
         p_reason: reason,
       });

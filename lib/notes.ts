@@ -88,6 +88,15 @@ export type Note = {
   kind?: ItemKind;
   /** Parent project: a kind "project" item in the same workspace. */
   projectId?: string | null;
+  /**
+   * Follow-up (ADR 001 §4), allowed on any kind. waitingOn: who it is
+   * waiting on (free text, not an account). waitingFor: what is expected.
+   * nextCheckOn: calendar date (YYYY-MM-DD) to check in, never an instant.
+   * Absent in older data; absent on a save means unchanged.
+   */
+  waitingOn?: string | null;
+  waitingFor?: string | null;
+  nextCheckOn?: string | null;
 };
 export type Workspace = {
   id: string;
@@ -148,6 +157,9 @@ export function createNote(
     workspaceId,
     kind: "note",
     projectId: null,
+    waitingOn: null,
+    waitingFor: null,
+    nextCheckOn: null,
   };
 }
 export function isNote(value: unknown): value is Note {
@@ -170,6 +182,9 @@ export function isNote(value: unknown): value is Note {
     (n.projectId === undefined ||
       n.projectId === null ||
       typeof n.projectId === "string") &&
+    (n.waitingOn === undefined || n.waitingOn === null || typeof n.waitingOn === "string") &&
+    (n.waitingFor === undefined || n.waitingFor === null || typeof n.waitingFor === "string") &&
+    (n.nextCheckOn === undefined || n.nextCheckOn === null || isDueDate(n.nextCheckOn)) &&
     (n.source === undefined ||
       n.source === "web" ||
       n.source === "slack" ||
@@ -394,16 +409,108 @@ export function orderForSave<T extends Note>(notes: T[]): T[] {
   return out;
 }
 
-/** Current export file format. Version 1 files have no kind or projectId. */
+/**
+ * Current export file format. Version 1 files have no kind, projectId or
+ * follow-up fields; version 2 has all of them (absent ones read as null).
+ */
 export const EXPORT_VERSION = 2;
-/** The JSON backup of an account's notes, with kind and projectId on each. */
+/** The JSON backup of an account's notes, with kind, projectId and follow-up fields on each. */
 export function exportDocument(notes: Note[], exportedAt = new Date().toISOString()) {
   return {
     version: EXPORT_VERSION,
     exportedAt,
-    notes: notes.map((n) => ({ ...n, kind: itemKind(n), projectId: n.projectId ?? null })),
+    notes: notes.map((n) => ({
+      ...n,
+      kind: itemKind(n),
+      projectId: n.projectId ?? null,
+      waitingOn: n.waitingOn ?? null,
+      waitingFor: n.waitingFor ?? null,
+      nextCheckOn: n.nextCheckOn ?? null,
+    })),
   };
 }
+
+// --- Follow-ups (ADR 001 §4) ------------------------------------------------
+
+/** Longest waitingOn and waitingFor, in characters (code points). */
+export const WAITING_ON_MAX = 200;
+export const WAITING_FOR_MAX = 2000;
+export type Followup = {
+  waitingOn: string | null;
+  waitingFor: string | null;
+  nextCheckOn: string | null;
+};
+export type FollowupField = keyof Followup;
+/** Why a follow-up value was refused (ADR 001 §7: a 400 invalid_payload). */
+export type FollowupError = { code: "invalid_payload"; field: FollowupField };
+
+// C0 controls, DEL and C1 controls, as in the database check constraints.
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+
+/** Trimmed text, null when empty, undefined when absent. */
+export function normalizeFollowupText(value: string | null | undefined) {
+  if (value === undefined || value === null) return value;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+/**
+ * Normalizes the follow-up fields that are present: text is trimmed (empty
+ * becomes null) and a date stays as is. Absent fields stay absent.
+ */
+export function normalizeFollowup(value: Partial<Followup>): Partial<Followup> {
+  const out: Partial<Followup> = {};
+  if (value.waitingOn !== undefined) out.waitingOn = normalizeFollowupText(value.waitingOn) ?? null;
+  if (value.waitingFor !== undefined) out.waitingFor = normalizeFollowupText(value.waitingFor) ?? null;
+  if (value.nextCheckOn !== undefined) out.nextCheckOn = value.nextCheckOn || null;
+  return out;
+}
+
+function textError(value: unknown, max: number) {
+  if (value === undefined || value === null) return false;
+  if (typeof value !== "string") return true;
+  const trimmed = value.trim();
+  return [...trimmed].length > max || CONTROL.test(trimmed);
+}
+
+/**
+ * The first follow-up field that would be refused, or null. Text must be at
+ * most its limit after trimming and contain no control characters (single
+ * line); nextCheckOn must be a calendar date or null/empty.
+ */
+export function followupError(value: Partial<Record<FollowupField, unknown>>): FollowupError | null {
+  if (textError(value.waitingOn, WAITING_ON_MAX)) return { code: "invalid_payload", field: "waitingOn" };
+  if (textError(value.waitingFor, WAITING_FOR_MAX)) return { code: "invalid_payload", field: "waitingFor" };
+  const date = value.nextCheckOn;
+  if (date !== undefined && date !== null && date !== "" && !isDueDate(date))
+    return { code: "invalid_payload", field: "nextCheckOn" };
+  return null;
+}
+
+/**
+ * Where an item's next check stands on `today` (YYYY-MM-DD, the user's local
+ * calendar date; see localToday() in lib/reminders): "overdue" before today,
+ * "due" today, "upcoming" later, or null without a check date or once the
+ * item is completed. Dates are compared as calendar dates, never instants.
+ */
+export function followupState(
+  note: Pick<Note, "nextCheckOn" | "completedAt">,
+  today: string,
+): "overdue" | "due" | "upcoming" | null {
+  const date = note.nextCheckOn;
+  if (!date || !isDueDate(date) || note.completedAt || !isDueDate(today)) return null;
+  return date < today ? "overdue" : date === today ? "due" : "upcoming";
+}
+
+/** Whether an item's next check is today or earlier (for Home's "Waiting for"). */
+export const followupDue = (
+  note: Pick<Note, "nextCheckOn" | "completedAt">,
+  today: string,
+) => {
+  const state = followupState(note, today);
+  return state === "overdue" || state === "due";
+};
 
 // --- Revisions and conflicts (ADR 002) -------------------------------------
 

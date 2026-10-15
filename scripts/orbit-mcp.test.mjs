@@ -16,6 +16,8 @@ test('MCP initializes, discovers tools, validates input and safely reports API f
     const list = tools.find(t => t.name === 'orbit_list_notes');
     assert.deepEqual(list.inputSchema.properties.kind.enum, ['note', 'task', 'project', 'document', 'followup']);
     assert.equal(list.inputSchema.required.includes('kind'), false);
+    assert.match(list.description, /waiting_on, waiting_for, next_check_on/, 'follow-up fields are documented');
+    assert.equal(Object.hasOwn(list.inputSchema.properties, 'waiting'), false, 'no follow-up filter (ADR 001 asks for none)');
     const capture = tools.find(t => t.name === 'orbit_capture_note');
     assert.equal(Object.hasOwn(capture.inputSchema.properties, 'kind'), false, 'captures stay notes');
     const badKind = await client.callTool({ name: 'orbit_list_notes',

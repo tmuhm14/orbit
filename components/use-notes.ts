@@ -6,6 +6,8 @@ import {
   MIN_CLIENT_HEADER,
   NOTES_CLIENT_VERSION,
   applySaveResults,
+  followupError,
+  normalizeFollowup,
   browserNotes,
   createNote,
   exportDocument,
@@ -17,6 +19,8 @@ import {
   projectLinkError,
   projectsIn,
   type ConflictInfo,
+  type Followup,
+  type FollowupError,
   type ItemKind,
   type LinkErrorCode,
   type Note,
@@ -24,8 +28,17 @@ import {
   type SaveResponse,
   type SyncedEntry,
 } from "@/lib/notes";
+import {
+  REMINDER_ERROR_CODES,
+  isActiveReminder,
+  parseReminderTime,
+  type Reminder,
+  type ReminderErrorCode,
+  type ReminderTime,
+} from "@/lib/reminders";
 
 const SAVE_DELAY = 800;
+const REMINDER_CODES = new Set<string>(REMINDER_ERROR_CODES);
 const POLL_INTERVAL = 30_000;
 
 /**
@@ -49,6 +62,22 @@ export type NoteConflict = ConflictInfo & {
 export type ItemError = { id: string; code: LinkErrorCode };
 /** A project delete refused because items still link to it. */
 export type BlockedDelete = { id: string; count: number };
+
+/**
+ * Outcome of a reminder call. Codes are ReminderErrorCode (see
+ * REMINDER_ERROR_MESSAGES in lib/reminders for user-facing text), or
+ * "unavailable" when the server could not be reached or failed.
+ * reminder_exists carries the item's waiting reminder; revision_conflict
+ * carries the current copy.
+ */
+export type ReminderResult =
+  | { ok: true; reminder: Reminder }
+  | {
+      ok: false;
+      code: ReminderErrorCode | "unavailable";
+      reminder?: Reminder;
+      current?: Reminder;
+    };
 
 async function api(path: string, init?: RequestInit) {
   const response = await fetch(path, {
@@ -102,6 +131,11 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
   const rejectedRef = useRef(rejectedMap);
   rejectedRef.current = rejectedMap;
   const [blockedDeletes, setBlockedDeletes] = useState<BlockedDelete[]>([]);
+  // Reminders loaded so far, by item id (newest first). Not part of autosave:
+  // each reminder change is its own revision-checked request.
+  const [reminderMap, setReminderMap] = useState<ReadonlyMap<string, Reminder[]>>(
+    new Map(),
+  );
   // Project deletes the user confirmed: linked items move up to its parent.
   const unlinkOnDelete = useRef(new Set<string>());
   const loadError = initialNotes === null;
@@ -460,6 +494,9 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
       dueDate: local.dueDate ?? null,
       kind: itemKind(local),
       projectId: local.projectId ?? null,
+      waitingOn: local.waitingOn ?? null,
+      waitingFor: local.waitingFor ?? null,
+      nextCheckOn: local.nextCheckOn ?? null,
     };
     takeTheirs(id);
     setNotes((list) => [copy, ...list]);
@@ -530,6 +567,127 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
     void refresh();
   }
 
+  // --- Follow-ups and reminders (ADR 001 §4; U-02 builds the UI on these) ---
+
+  /**
+   * Sets any of an item's follow-up fields, on any kind. Text is trimmed and
+   * an empty value (or null) clears the field. Returns an error (code
+   * invalid_payload and the field) instead of changing anything when a value
+   * would be refused: waitingOn over 200 or waitingFor over 2000 characters,
+   * control characters (line breaks included), or a nextCheckOn that is not
+   * a YYYY-MM-DD date. Saved with the next autosave like any other edit.
+   */
+  function setFollowup(id: string, followup: Partial<Followup>): FollowupError | null {
+    const error = followupError(followup);
+    if (error) return error;
+    const note = notesRef.current.find((n) => n.id === id);
+    if (!note) return null;
+    const patch = normalizeFollowup(followup);
+    const changed = (Object.keys(patch) as (keyof Followup)[]).some(
+      (key) => (note[key] ?? null) !== patch[key],
+    );
+    if (changed) editNote(id, patch);
+    return null;
+  }
+
+  function storeReminder(reminder: Reminder) {
+    setReminderMap((map) => {
+      const next = new Map(map);
+      const list = next.get(reminder.noteId) ?? [];
+      next.set(reminder.noteId, [
+        reminder,
+        ...list.filter((r) => r.id !== reminder.id),
+      ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+      return next;
+    });
+  }
+
+  /** Maps a reminder response, keeping the local list current. */
+  function reminderResult(status: number, body: Record<string, unknown>): ReminderResult {
+    const reminder = body.reminder as Reminder | undefined;
+    if ((status === 200 || status === 201) && reminder) {
+      storeReminder(reminder);
+      return { ok: true, reminder };
+    }
+    const current = body.current as Reminder | undefined;
+    if (current) storeReminder(current);
+    if (reminder) storeReminder(reminder);
+    const code = typeof body.code === "string" ? body.code : "";
+    return {
+      ok: false,
+      code: REMINDER_CODES.has(code) ? (code as ReminderErrorCode) : "unavailable",
+      ...(reminder ? { reminder } : {}),
+      ...(current ? { current } : {}),
+    };
+  }
+
+  async function reminderWrite(path: string, method: string, payload: unknown): Promise<ReminderResult> {
+    try {
+      const { status, body, minClient } = await write(path, {
+        method,
+        body: JSON.stringify(payload),
+      });
+      checkClient(minClient);
+      return reminderResult(status, body);
+    } catch {
+      return { ok: false, code: "unavailable" };
+    }
+  }
+
+  /** Loads an item's reminders (newest first) into remindersFor(). */
+  async function loadReminders(
+    noteId: string,
+  ): Promise<{ ok: true; reminders: Reminder[] } | { ok: false; code: ReminderErrorCode | "unavailable" }> {
+    try {
+      const response = await fetch(`/api/notes/${noteId}/reminders`, { cache: "no-store" });
+      const body = await response.json().catch(() => null);
+      if (response.ok && Array.isArray(body?.reminders)) {
+        const reminders = body.reminders as Reminder[];
+        setReminderMap((map) => new Map(map).set(noteId, reminders));
+        return { ok: true, reminders };
+      }
+      return {
+        ok: false,
+        code: response.status === 404 ? "not_found" : response.status === 400 ? "invalid_payload" : "unavailable",
+      };
+    } catch {
+      return { ok: false, code: "unavailable" };
+    }
+  }
+
+  /**
+   * Adds a reminder at a wall-clock date and time in an IANA zone (use
+   * defaultTimeZone() from lib/reminders for the browser's). An item that
+   * has not been saved yet is saved first. One waiting reminder per item.
+   */
+  async function createReminder(noteId: string, time: ReminderTime): Promise<ReminderResult> {
+    const parsed = parseReminderTime(time);
+    if (!parsed.ok) return { ok: false, code: parsed.code };
+    if (!synced.current.has(noteId)) await flush();
+    if (!synced.current.has(noteId)) return { ok: false, code: "unavailable" };
+    return reminderWrite(`/api/notes/${noteId}/reminders`, "POST", parsed.value);
+  }
+
+  function changeReminder(
+    reminder: Pick<Reminder, "id" | "noteId" | "revision">,
+    action: "update" | "snooze" | "cancel",
+    time: Partial<ReminderTime> = {},
+  ): Promise<ReminderResult> {
+    const parsed = parseReminderTime(time, { partial: true });
+    if (!parsed.ok) return Promise.resolve({ ok: false, code: parsed.code });
+    if (action !== "cancel" && !Object.keys(parsed.value).length)
+      return Promise.resolve({ ok: false, code: "invalid_payload" });
+    return reminderWrite(
+      `/api/notes/${reminder.noteId}/reminders/${reminder.id}`,
+      "PATCH",
+      {
+        action,
+        expectedRevision: reminder.revision,
+        ...(action === "cancel" ? {} : parsed.value),
+      },
+    );
+  }
+
   const itemErrors = useMemo(
     () => [...rejectedMap].map(([id, r]): ItemError => ({ id, code: r.code })),
     [rejectedMap],
@@ -589,5 +747,25 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
       setBlockedDeletes((list) => list.filter((b) => b.id !== id)),
     /** The JSON backup (version 2, with kind and projectId). */
     exportData: () => exportDocument(notesRef.current),
+    // Follow-ups (ADR 001 §4). Errors are FollowupError (400 invalid_payload).
+    setFollowup,
+    // Reminders. Every change states the reminder's revision (pass the
+    // reminder as last loaded); a conflict returns code revision_conflict
+    // with the current copy, which is also stored here.
+    loadReminders,
+    /** Reminders loaded for an item, newest first (empty until loaded). */
+    remindersFor: (noteId: string) => reminderMap.get(noteId) ?? [],
+    /** The item's waiting (scheduled or snoozed) reminder, if loaded. */
+    activeReminderFor: (noteId: string) =>
+      (reminderMap.get(noteId) ?? []).find(isActiveReminder) ?? null,
+    createReminder,
+    /** New wall-clock fields; absent ones keep their value. */
+    updateReminder: (reminder: Reminder, time: Partial<ReminderTime>) =>
+      changeReminder(reminder, "update", time),
+    /** Postpones to a new wall-clock time; the reminder becomes snoozed. */
+    snoozeReminder: (reminder: Reminder, time: Partial<ReminderTime>) =>
+      changeReminder(reminder, "snooze", time),
+    /** Cancels it; canceled reminders stay in the list as history. */
+    cancelReminder: (reminder: Reminder) => changeReminder(reminder, "cancel"),
   };
 }

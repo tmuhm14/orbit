@@ -8,6 +8,9 @@ import { as, createDb, migrate, skip } from "./harness.mjs";
 // concurrent re-parentings is checked by its presence (it is held inside the
 // transaction), not by two racing transactions.
 const D02 = "20261015000000_note_kinds_and_project_links.sql";
+// The compatibility checks compare D-01 with D-02 exactly, so their D-02 side
+// stops before D-03 (whose own checks are in note-followups.test.mjs).
+const D03 = "20261016000000_note_followups_and_reminders.sql";
 const A = "aaaaaaaa-0000-4000-8000-000000000001";
 const B = "bbbbbbbb-0000-4000-8000-000000000002";
 let n = 0;
@@ -131,7 +134,7 @@ test("legacy rows read as kind note with no project, and are otherwise unchanged
   await x.save(A, [{ ...x.note(N, ws, { bucket: "projects", title: "Legacy" }), expected_revision: null }]);
   await x.save(A, [{ ...x.note(N, ws, { bucket: "projects", title: "Legacy 2" }), expected_revision: 1 }]);
   const before = (await db.query("select * from public.notes where id = $1", [N])).rows[0];
-  await migrate(db, { from: D02 });
+  await migrate(db, { from: D02, until: D03 });
   const after = (await db.query("select * from public.notes where id = $1", [N])).rows[0];
   assert.deepEqual([after.kind, after.project_id], ["note", null], "a projects-bucket note is not reclassified");
   const { kind: _k, project_id: _p, ...rest } = after;
@@ -140,7 +143,7 @@ test("legacy rows read as kind note with no project, and are otherwise unchanged
 
 test("D-01 payloads behave exactly the same after the D-02 migration", { skip }, async () => {
   const old = await legacyScenario(D02);
-  const now = await legacyScenario();
+  const now = await legacyScenario(D03);
   // Conflict copies gain kind and project_id (additive; older readers ignore
   // unknown keys). Everything else is identical.
   const copies = [];
