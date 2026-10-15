@@ -530,7 +530,7 @@ test("moving an item used by an active assignment is refused, as source or conte
   const check = async (label) => {
     for (const id of [src, ctx]) {
       const r = await move(id, to);
-      assert.deepEqual([r.status, r.code], ["invalid", "invalid_note"], `${label}: save_notes`);
+      assert.deepEqual([r.status, r.code], ["invalid", "assignment_active"], `${label}: save_notes`);
       assert.equal(await wsOf(id), ws);
       await assert.rejects(as(db, "authenticated", A, "update public.notes set workspace_id = $1 where id = $2", [to, id]),
         /assignment_active/, `${label}: direct update`);
@@ -553,7 +553,7 @@ test("moving an item used by an active assignment is refused, as source or conte
   const other = await note(A, ws, "note");
   const done = (await create(A, ws, other, { context: [ctx] })).assignment;
   await cancel(A, done.id);
-  assert.equal((await move(ctx, to)).code, "invalid_note");
+  assert.equal((await move(ctx, to)).code, "assignment_active");
   assert.equal((await one("select note_id from public.assignment_context_items where assignment_id = $1", [done.id])).note_id, ctx,
     "a refused move detaches nothing");
 });

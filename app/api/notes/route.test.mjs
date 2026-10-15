@@ -41,6 +41,9 @@ function rpc(name, args) {
         const { expected_revision: _e, ...values } = item;
         // Link rules are the database's (see note-projects.test.mjs); the
         // double knows just enough to return a per-item code.
+        // The workspace-move trigger (supabase/tests/note-assignment-active.test.mjs).
+        if (existing?.activeAssignment && values.workspace_id !== existing.workspace_id)
+          return { id: item.id, status: "invalid", code: "assignment_active" };
         const parent = values.project_id && rows.get(values.project_id);
         if (values.project_id && (parent?.kind !== "project" || parent.workspace_id !== values.workspace_id))
           return { id: item.id, status: "invalid", code: "invalid_project_link" };
@@ -193,6 +196,26 @@ test("kind and project links: saved when valid, per-item 422 codes when not", as
     const response = await put([{ ...newNote("x"), ...invalid, expectedRevision: null }]);
     assert.deepEqual([response.status, response.body.code], [400, "invalid_payload"]);
   }
+});
+
+test("a workspace move refused by an open assignment is a 422 assignment_active", async () => {
+  const OTHER = "87654321-4321-4321-4321-cba987654321";
+  const task = { ...newNote("Delegated"), kind: "task" };
+  const free = newNote("Free");
+  await put([{ ...task, expectedRevision: null }, { ...free, expectedRevision: null }]);
+  rows.get(task.id).activeAssignment = true;
+  const moved = await put([{ ...task, workspaceId: OTHER, expectedRevision: 1 }, { ...free, workspaceId: OTHER, expectedRevision: 1 }]);
+  assert.deepEqual([moved.status, moved.body.code, moved.body.saved], [422, "assignment_active", 1]);
+  assert.deepEqual(moved.body.results[0], { id: task.id, status: "invalid", code: "assignment_active" });
+  assert.equal(moved.body.results[1].status, "saved");
+  assert.equal(rows.get(task.id).workspace_id, WS, "not moved");
+  assert.doesNotMatch(moved.body.error, /Delegated/);
+  assert.equal(moved.headers.get("X-Orbit-Min-Client"), "1");
+  // The client holds it as an item error with its own message.
+  const applied = notesModule.applySaveResults(new Map(), [{ ...task, workspaceId: OTHER, expectedRevision: 1 }], moved.body.results);
+  assert.deepEqual(applied.rejected.map((r) => r.code), ["assignment_active"]);
+  assert.equal(applied.failed, false);
+  assert.ok(notesModule.LINK_ERROR_MESSAGES.assignment_active);
 });
 
 test("deleting a project with linked items needs unlinkChildren", async () => {

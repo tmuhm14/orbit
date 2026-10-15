@@ -292,13 +292,26 @@ export const LINK_ERROR_CODES = [
 export type LinkErrorCode = (typeof LINK_ERROR_CODES)[number];
 export const isLinkErrorCode = (value: unknown): value is LinkErrorCode =>
   LINK_ERROR_CODES.includes(value as LinkErrorCode);
+/**
+ * Every per-item code a save can be refused with and that retrying can't
+ * fix: the link codes, plus assignment_active (a workspace move refused
+ * while an open assignment uses the item, ADR 003 §2). Kept apart from
+ * LinkErrorCode, which the agent's own refusals also use and which can't
+ * come from a workspace move.
+ */
+export const ITEM_ERROR_CODES = [...LINK_ERROR_CODES, "assignment_active"] as const;
+export type ItemErrorCode = (typeof ITEM_ERROR_CODES)[number];
+export const isItemErrorCode = (value: unknown): value is ItemErrorCode =>
+  ITEM_ERROR_CODES.includes(value as ItemErrorCode);
 /** Short, content-free explanations for each code. */
-export const LINK_ERROR_MESSAGES: Record<LinkErrorCode, string> = {
+export const LINK_ERROR_MESSAGES: Record<ItemErrorCode, string> = {
   invalid_project_link: "That item can't be linked to this project.",
   project_cycle: "A project can't be placed inside one of its own sub-projects.",
   project_depth_exceeded: `Projects can be nested at most ${MAX_PROJECT_DEPTH} levels deep.`,
   linked_item_move: "Unlink this item from its project before moving it to another space.",
   project_has_linked_items: "This project still has linked items.",
+  assignment_active:
+    "An open assignment uses this item. Finish or cancel it before moving the item to another space.",
 };
 
 /** Projects in a workspace, by title. */
@@ -541,7 +554,7 @@ export type SaveResult =
   | {
       id: string;
       status: "invalid";
-      code: LinkErrorCode | "not_found" | "invalid_note";
+      code: ItemErrorCode | "not_found" | "invalid_note";
     };
 
 export type SaveResponse = {
@@ -630,7 +643,7 @@ export function applySaveResults(
   const next = new Map(synced);
   const sentById = new Map(sent.map((n) => [n.id, n]));
   const conflicts: ConflictInfo[] = [];
-  const rejected: { id: string; code: LinkErrorCode; updatedAt: string }[] = [];
+  const rejected: { id: string; code: ItemErrorCode; updatedAt: string }[] = [];
   let failed = false;
   for (const result of results) {
     const note = sentById.get(result.id);
@@ -644,7 +657,7 @@ export function applySaveResults(
         currentRevision: result.currentRevision,
         server: result.current ?? null,
       });
-    else if (result.status === "invalid" && isLinkErrorCode(result.code))
+    else if (result.status === "invalid" && isItemErrorCode(result.code))
       rejected.push({ id: result.id, code: result.code, updatedAt: note.updatedAt });
     else failed = true;
   }

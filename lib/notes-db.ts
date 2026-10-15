@@ -1,7 +1,7 @@
 import "server-only";
 import {
   BUCKETS,
-  LINK_ERROR_CODES,
+  ITEM_ERROR_CODES,
   followupError,
   isItemKind,
   normalizeFollowupText,
@@ -180,7 +180,7 @@ type RawSaveResult = {
 };
 
 const INVALID_CODES = new Set<string>([
-  ...LINK_ERROR_CODES,
+  ...ITEM_ERROR_CODES,
   "not_found",
   "invalid_note",
 ]);

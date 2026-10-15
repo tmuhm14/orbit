@@ -22,6 +22,7 @@ import {
   type Followup,
   type FollowupError,
   type ItemKind,
+  type ItemErrorCode,
   type LinkErrorCode,
   type Note,
   type NoteWrite,
@@ -56,10 +57,12 @@ export type NoteConflict = ConflictInfo & {
 };
 
 /**
- * A kind or project change the server refused (ADR 001 §7). The local edit
- * is kept but not resent until the note changes again.
+ * A kind, project or workspace change the server refused (ADR 001 §7), or a
+ * workspace move refused while an open assignment uses the item
+ * (assignment_active, ADR 003 §2). The local edit is kept but not resent
+ * until the note changes again.
  */
-export type ItemError = { id: string; code: LinkErrorCode };
+export type ItemError = { id: string; code: ItemErrorCode };
 /** A project delete refused because items still link to it. */
 export type BlockedDelete = { id: string; count: number };
 
@@ -126,7 +129,7 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
   const [reloadRequired, setReloadRequired] = useState(false);
   // Refused link changes: id → code and the updatedAt that was refused.
   const [rejectedMap, setRejectedMap] = useState<
-    ReadonlyMap<string, { code: LinkErrorCode; updatedAt: string }>
+    ReadonlyMap<string, { code: ItemErrorCode; updatedAt: string }>
   >(new Map());
   const rejectedRef = useRef(rejectedMap);
   rejectedRef.current = rejectedMap;
@@ -205,7 +208,7 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
   }
 
   function setRejected(
-    update: (map: Map<string, { code: LinkErrorCode; updatedAt: string }>) => void,
+    update: (map: Map<string, { code: ItemErrorCode; updatedAt: string }>) => void,
   ) {
     const next = new Map(rejectedRef.current);
     update(next);
@@ -737,7 +740,11 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
     /** Whether a link would be accepted; null when it would. */
     linkErrorFor: (id: string, projectId: string | null, kind?: ItemKind) =>
       projectLinkError(notes, id, projectId, kind),
-    /** Kind or project changes the server refused; kept locally, not resent. */
+    /**
+     * Changes the server refused (ItemErrorCode: link codes, or
+     * assignment_active for a workspace move an open assignment blocks);
+     * kept locally, not resent. LINK_ERROR_MESSAGES has text for each.
+     */
     itemErrors,
     itemErrorFor: (id: string) => itemErrors.find((e) => e.id === id) ?? null,
     revertItemChange,
