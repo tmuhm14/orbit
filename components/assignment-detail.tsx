@@ -5,6 +5,8 @@ import { createPortal } from "react-dom";
 import {
   ArrowUpRight,
   Ban,
+  BookOpen,
+  CheckCircle2,
   CircleCheck,
   LoaderCircle,
   MessageCircleQuestion,
@@ -28,9 +30,13 @@ import {
   timelineEntries,
   viewActions,
 } from "@/lib/assignment-view";
+import { acceptedArtifactId } from "@/lib/agents-view";
+import { ArtifactPreview } from "./artifact-preview";
 import { AssignmentErrorNotice, AssignmentStateBadge, type ErrorNoticeActions } from "./assignment-status";
+import { SaveDocumentForm, SavedDocumentLink } from "./save-document";
 import { useAssignmentDetail, useNow, type ActionError, type AssignmentAction } from "./use-assignment";
 import { useModalDialog } from "./use-modal-dialog";
+import { useWorkspaceShell } from "./workspace-shell-context";
 
 const when = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "";
@@ -61,7 +67,15 @@ export function AssignmentDetailDialog({
   const id = useId();
   const ref = useRef<HTMLDivElement>(null);
   const onKeyDown = useModalDialog(ref, onClose);
-  const { detail, loadErrorCode, busy, act, reload } = useAssignmentDetail(assignmentId, onChange);
+  const shell = useWorkspaceShell();
+  const { assignmentChanged } = shell;
+  const { detail, loadErrorCode, busy, act, reload } = useAssignmentDetail(assignmentId, (next) => {
+    onChange(next);
+    assignmentChanged(next);
+  });
+  const [saving, setSaving] = useState(false);
+  /** The document just saved here, shown before the reload carries savedNoteId. */
+  const [justSaved, setJustSaved] = useState<string | null>(null);
   const [actionError, setActionError] = useState<ActionError | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [answer, setAnswer] = useState("");
@@ -232,10 +246,8 @@ export function AssignmentDetailDialog({
             <h3 id={`${id}-result`}>
               <CircleCheck size={15} aria-hidden="true" /> Result: {artifact.title || "Untitled result"}
             </h3>
-            {/* Executor-written: plain text only, never HTML. */}
-            <div className="assignment-artifact assignment-untrusted" tabIndex={0} aria-label="Result text">
-              {artifact.plainText || "The result is empty."}
-            </div>
+            {/* Executor-written: the safe Tiptap subset, read-only, or plain text. Never HTML. */}
+            <ArtifactPreview content={artifact.content} plainText={artifact.plainText} label="Result preview" />
             <p className="assignment-muted">
               Accepting keeps this result with the assignment. It doesn’t complete “{itemTitle(source)}”; mark
               that done yourself when you’re ready.
@@ -285,6 +297,74 @@ export function AssignmentDetailDialog({
             </div>
           </section>
         )}
+        {assignment.state === "completed" && (() => {
+          const acceptedId = acceptedArtifactId(detail.reviews);
+          const accepted = detail.artifacts.find((a) => a.id === acceptedId);
+          const sourceDone = !!source?.completedAt;
+          const canComplete = !!source && !sourceDone && source.workspaceId === shell.workspaceId;
+          return (
+            <section className="assignment-step is-accepted" aria-labelledby={`${id}-accepted`}>
+              <h3 id={`${id}-accepted`}>
+                <CircleCheck size={15} aria-hidden="true" /> Accepted{accepted ? `: ${accepted.title || "Untitled result"}` : ""}
+              </h3>
+              {accepted && (
+                <ArtifactPreview content={accepted.content} plainText={accepted.plainText} label="Accepted result" />
+              )}
+              {accepted && (accepted.savedNoteId ?? justSaved) ? (
+                <SavedDocumentLink
+                  noteId={(accepted.savedNoteId ?? justSaved)!}
+                  notes={notes}
+                  onOpenNote={onOpenNote}
+                  autoFocus={!!justSaved}
+                />
+              ) : accepted && saving ? (
+                <SaveDocumentForm
+                  assignment={assignment}
+                  artifact={accepted}
+                  notes={notes}
+                  onCancel={() => setSaving(false)}
+                  onOpenNote={onOpenNote}
+                  onReload={reload}
+                  onSaved={async (noteId, next) => {
+                    onChange(next);
+                    assignmentChanged(next);
+                    await Promise.all([reload(), shell.refreshNotes()]);
+                    setSaving(false);
+                    setJustSaved(noteId);
+                    shell.showActionToast("Saved to Reference", { label: "Open", onAction: () => onOpenNote(noteId) });
+                  }}
+                />
+              ) : accepted ? (
+                <div className="assignment-step-actions">
+                  <button type="button" className="secondary-button" onClick={() => setSaving(true)}>
+                    <BookOpen size={14} aria-hidden="true" /> Save as document
+                  </button>
+                </div>
+              ) : (
+                <p className="assignment-muted">The accepted result isn’t loaded.</p>
+              )}
+              <div className="accepted-source">
+                {sourceDone ? (
+                  <p className="assignment-muted">
+                    <CheckCircle2 size={13} aria-hidden="true" /> “{itemTitle(source)}” is marked done.
+                  </p>
+                ) : source ? (
+                  <>
+                    <p className="assignment-muted">
+                      Accepting didn’t complete “{itemTitle(source)}”. Mark it done when you’re ready.
+                    </p>
+                    {canComplete && (
+                      <button type="button" className="text-button" onClick={() => shell.items.completeNote(source.id)}>
+                        <CheckCircle2 size={14} aria-hidden="true" /> Mark source complete
+                      </button>
+                    )}
+                  </>
+                ) : null}
+              </div>
+            </section>
+          );
+        })()}
+
         {actions.review && !artifact && (
           <p className="assignment-muted">A result is ready, but it isn’t loaded yet.</p>
         )}
@@ -342,6 +422,12 @@ export function AssignmentDetailDialog({
                   <div>
                     <strong>{entry.title}</strong>
                     {entry.text && <p className="assignment-untrusted">{entry.text}</p>}
+                    {entry.noteId && (
+                      <button type="button" className="assignment-link" onClick={() => onOpenNote(entry.noteId!)}>
+                        {itemTitle(byId.get(entry.noteId))}
+                        <ArrowUpRight size={13} aria-hidden="true" />
+                      </button>
+                    )}
                     <time dateTime={entry.at}>{when(entry.at)}</time>
                   </div>
                 </li>

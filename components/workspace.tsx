@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   BUCKETS,
@@ -12,6 +12,8 @@ import {
   type SlackConnection,
   type Workspace as WorkspaceInfo,
 } from "@/lib/notes";
+import type { Assignment } from "@/lib/assignments/types";
+import { AgentsPage } from "./agents-page";
 import { ConflictNotice, ReloadBanner } from "./conflict-banner";
 import { ScheduledAudit } from "./scheduled-audit";
 import { SettingsContent } from "./settings-content";
@@ -66,6 +68,9 @@ export function Workspace({
   const pathname = usePathname();
   const settingsPage = pathname === "/settings";
   const scheduledPage = pathname === "/scheduled";
+  const agentsPage = pathname === "/agents";
+  // Pages other than the notes route (/): navigating to a view leaves them.
+  const otherPage = settingsPage || scheduledPage || agentsPage;
   const notesApi = useNotes(userId, initialNotes);
   const {
     notes,
@@ -91,6 +96,15 @@ export function Workspace({
   const [tagFilter, setTagFilter] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toast, setToast] = useToast();
+  // Detail dialogs and Delegate report fresher copies; a new assignment or
+  // revision bumps the version so the Agents page and Home reload.
+  const [assignmentsVersion, setAssignmentsVersion] = useState(0);
+  const seenRevisions = useRef(new Map<string, number>());
+  const assignmentChanged = useCallback((assignment: Assignment) => {
+    const seen = seenRevisions.current.get(assignment.id);
+    seenRevisions.current.set(assignment.id, assignment.revision);
+    if (seen !== assignment.revision) setAssignmentsVersion((v) => v + 1);
+  }, []);
   // A project delete the user started here (it has linked items locally).
   // Deletes the server refused arrive through blockedDeletes instead.
   const [localProjectDelete, setLocalProjectDelete] = useState<ProjectDelete | null>(null);
@@ -113,7 +127,8 @@ export function Workspace({
     }
   }, [initialSearchOpen, settingsPage, setSearchOpen]);
   useWorkspaceShortcuts({
-    disabled: !!selected || !!projectDelete,
+    // The assignment detail handles its own Escape and keeps focus inside.
+    disabled: !!selected || !!projectDelete || !!dialogs.assignmentId,
     onSearch: openSearch,
     onCapture: capture.focus,
     onEscape: () => {
@@ -134,13 +149,14 @@ export function Workspace({
   const bucket = BUCKETS.find((b) => b.id === view);
   const currentNote = notes.find((n) => n.id === selected);
   function openSearch() {
-    if (settingsPage || scheduledPage) { router.push("/?focus=search"); return; }
+    if (otherPage) { router.push("/?focus=search"); return; }
     setSearchOpen(true);
     setTimeout(() => searchRef.current?.focus(), 0);
   }
   function switchWorkspace(id: string) {
     spaces.select(id);
-    if (!settingsPage && !scheduledPage) navigate("overview");
+    // The Agents page shows the new space's work; settings and jobs stay put.
+    if (!otherPage) navigate("overview");
   }
   const notesPerWorkspace = Object.fromEntries(
     spaces.workspaces.map((w) => [
@@ -184,7 +200,7 @@ export function Workspace({
     onError: setToast,
   };
   function navigate(next: View) {
-    if (settingsPage || scheduledPage) router.push(next === "overview" ? "/" : `/?view=${next}`);
+    if (otherPage) router.push(next === "overview" ? "/" : `/?view=${next}`);
     setView(next);
     setSearch("");
     setTagFilter("");
@@ -271,6 +287,23 @@ export function Workspace({
     showToast: setToast,
     items,
     conflictIds,
+    agentsPage,
+    agentEnabled: spaces.current.agentEnabled,
+    refreshNotes: refresh,
+    showActionToast: (message, action) => setToast({ message, action }),
+    openAssignment: (id) => dialogs.setAssignmentId(id),
+    assignmentsVersion,
+    assignmentChanged,
+    openSettings: () => {
+      setSelected(null);
+      dialogs.setAssignmentId(null);
+      router.push("/settings");
+    },
+    openAgentDialog: () => {
+      setSelected(null);
+      dialogs.setAssignmentId(null);
+      dialogs.setAgentOpen(true);
+    },
   };
   if (sessionExpired)
     return (
@@ -317,7 +350,7 @@ export function Workspace({
               />
             </div>
           )}
-          {scheduledPage ? <ScheduledAudit onOpenScheduled={() => dialogs.setScheduledOpen(true)} refreshToken={dialogs.scheduledRefreshToken} /> : settingsPage ? <SettingsContent
+          {agentsPage ? <AgentsPage /> : scheduledPage ? <ScheduledAudit onOpenScheduled={() => dialogs.setScheduledOpen(true)} refreshToken={dialogs.scheduledRefreshToken} /> : settingsPage ? <SettingsContent
             email={email}
             workspaces={spaces.workspaces}
             slack={spaces.slack}
@@ -361,6 +394,8 @@ export function Workspace({
           onCloseNote={() => setSelected(null)}
           onToggleAgent={(enabled) => spaces.setAgentEnabled(workspaceId, enabled)}
           onAgentNotesChanged={() => void refresh()}
+          onAssignmentChange={assignmentChanged}
+          onDismissToast={() => setToast("")}
         />
       </div>
     </WorkspaceShellProvider>

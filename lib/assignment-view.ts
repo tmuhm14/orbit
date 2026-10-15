@@ -14,8 +14,8 @@ import {
 import type {
   Assignment,
   AssignmentDetail,
-  AssignmentErrorCode,
   AssignmentEvent,
+  AssignmentRouteErrorCode,
 } from "./assignments/types.ts";
 import { itemKind, type Note } from "./notes.ts";
 
@@ -176,9 +176,9 @@ export function failureCopy(code: string | null | undefined): string {
 }
 
 /** What a friendly error message offers next. */
-export type ErrorAction = "settings" | "existing" | "refetch" | "reload" | "retry" | null;
+export type ErrorAction = "settings" | "existing" | "saved" | "refetch" | "reload" | "retry" | null;
 export type ErrorCopy = { message: string; action: ErrorAction };
-export type ViewErrorCode = AssignmentErrorCode | "network_error" | "unexpected_response";
+export type ViewErrorCode = AssignmentRouteErrorCode | "network_error" | "unexpected_response";
 
 export const ERROR_COPY: Record<ViewErrorCode, ErrorCopy> = {
   agent_disabled: { message: "Turn on the agent and save a model key", action: "settings" },
@@ -196,6 +196,10 @@ export const ERROR_COPY: Record<ViewErrorCode, ErrorCopy> = {
   load_failed: { message: "Orbit couldn’t load this right now.", action: "retry" },
   save_failed: { message: "Orbit couldn’t save that right now. Try again.", action: "retry" },
   not_configured: { message: "Delegation isn’t set up on this server yet.", action: null },
+  already_saved: { message: "This result is already saved as a document.", action: "saved" },
+  invalid_project_link: { message: "That project isn’t available in this space any more. Pick another, or None.", action: null },
+  project_cycle: { message: "That project can’t hold this document. Pick another, or None.", action: null },
+  project_depth_exceeded: { message: "That project is nested too deeply to hold another item. Pick another, or None.", action: null },
   network_error: { message: "Orbit couldn’t be reached. Check your connection.", action: "retry" },
   unexpected_response: { message: "Orbit sent back something unexpected. Try again.", action: "retry" },
 };
@@ -218,6 +222,8 @@ export type TimelineEntry = {
   title: string;
   /** Executor- or user-written text; render as plain text only. */
   text?: string;
+  /** A note the entry links to (artifact_saved: the saved document). */
+  noteId?: string;
 };
 
 const DECISION_LABELS = { accept: "You accepted the result", request_changes: "You asked for changes", reject: "You declined the result" } as const;
@@ -308,6 +314,11 @@ export function timelineEntries(
       case "context_unavailable":
         entries.push({ ...base, tone: "bad", title: "A context item couldn’t be read" });
         break;
+      case "artifact_saved": {
+        const noteId = str(event.payload.noteId);
+        entries.push({ ...base, tone: "good", title: "Saved as a document", ...(noteId ? { noteId } : {}) });
+        break;
+      }
       case "item_detached":
         entries.push({
           ...base,
