@@ -1,0 +1,268 @@
+import { test, beforeEach } from "node:test";
+import assert from "node:assert/strict";
+import * as transitions from "../../../lib/assignments/transitions.ts";
+import { loadTs } from "../../../tests/load-ts.mjs";
+
+// Assignment routes with doubles for the Supabase client. The real
+// routeUser() runs (sign-in and the same-origin check on mutations), with
+// only its client and config replaced. The rpc double returns what the SQL
+// functions return; the functions themselves are exercised against Postgres
+// in supabase/tests/assignments.test.mjs.
+const USER = "aaaaaaaa-0000-4000-8000-000000000001";
+const WS = "12345678-1234-4234-8234-123456789abc";
+const NOTE = "11111111-1111-4111-8111-111111111111";
+const CTX = "22222222-2222-4222-8222-222222222222";
+const ID = "33333333-3333-4333-8333-333333333333";
+const ART = "44444444-4444-4444-8444-444444444444";
+const QID = "55555555-5555-4555-8555-555555555555";
+const SECRET_TEXT = "Ask the vendor about invoice 4471";
+const ORIGIN = "http://localhost";
+
+const row = (patch = {}) => ({
+  id: ID, workspace_id: WS, source_note_id: NOTE, requested_outcome: SECRET_TEXT, executor_kind: "builtin",
+  capabilities: ["assignment.execute", "workspace.read"], state: "queued", revision: 1, current_attempt_id: null,
+  max_attempts: 1, error_code: null, created_at: "2026-10-14T00:00:00+00:00", updated_at: "2026-10-14T00:00:00+00:00",
+  state_changed_at: "2026-10-14T00:00:00+00:00", finished_at: null, ...patch,
+});
+
+let calls, rpcResult, signedIn, tables;
+beforeEach(() => {
+  calls = [];
+  rpcResult = () => ({ data: { status: "created", assignment: row() }, error: null });
+  signedIn = true;
+  tables = {
+    workspaces: [{ id: WS }],
+    assignments: [row(), row({ id: "66666666-6666-4666-8666-666666666666", workspace_id: "99999999-9999-4999-8999-999999999999" })],
+    assignment_context_items: [{ assignment_id: ID, note_id: CTX, position: 1, revision_at_selection: 3, content_role: "untrusted_data" }],
+    assignment_attempts: [{ assignment_id: ID, id: "77777777-7777-4777-8777-777777777777", attempt_number: 1, status: "waiting",
+      lease_expires_at: "2026-10-14T00:01:30+00:00", heartbeat_at: "2026-10-14T00:00:00+00:00", provider: null, model: null,
+      error_code: null, started_at: "2026-10-14T00:00:00+00:00", finished_at: "2026-10-14T00:00:10+00:00" }],
+    assignment_events: [{ assignment_id: ID, id: 9, attempt_id: null, type: "state_changed", actor: "user", from_state: null,
+      to_state: "queued", payload: { revision: 1 }, created_at: "2026-10-14T00:00:00+00:00" }],
+    assignment_questions: [{ assignment_id: ID, id: QID, attempt_id: "77777777-7777-4777-8777-777777777777", prompt: "Which tone?",
+      answer: null, asked_at: "2026-10-14T00:00:05+00:00", answered_at: null, closed_at: null }],
+    assignment_artifacts: [],
+    assignment_reviews: [],
+  };
+});
+
+function from(table) {
+  const filters = [];
+  const builder = {
+    select: (columns) => (calls.push(["select", table, columns]), builder),
+    eq: (column, value) => (filters.push((r) => column === "user_id" || r[column] === value), builder),
+    in: (column, values) => (calls.push(["in", table, column, values]), filters.push((r) => values.includes(r[column])), builder),
+    order: () => builder,
+    limit: () => builder,
+    returns: async () => ({ data: tables[table].filter((r) => filters.every((f) => f(r))), error: null }),
+    maybeSingle: async () => ({ data: tables[table].find((r) => filters.every((f) => f(r))) ?? null, error: null }),
+  };
+  return builder;
+}
+const supabase = {
+  from,
+  rpc: async (name, args) => {
+    calls.push(["rpc", name, args]);
+    return name === "reap_own_assignment_leases" ? { data: { timedOut: 0, unavailable: 0 }, error: null } : rpcResult(name, args);
+  },
+  auth: { getUser: async () => ({ data: { user: signedIn ? { id: USER } : null } }) },
+};
+
+const routeAuth = loadTs(new URL("../../../lib/supabase/route-auth.ts", import.meta.url), {
+  "./server": { createClient: async () => supabase },
+  "./config": { authConfig: () => ({ url: "http://supabase.test", key: "k" }) },
+});
+const server = loadTs(new URL("../../../lib/assignments/server.ts", import.meta.url), {
+  "@/lib/supabase/route-auth": routeAuth,
+});
+const validation = loadTs(new URL("../../../lib/assignments/validation.ts", import.meta.url), { "./transitions": transitions });
+const imports = {
+  "@/lib/supabase/route-auth": routeAuth,
+  "@/lib/assignments/server": server,
+  "@/lib/assignments/validation": validation,
+};
+const load = (path) => loadTs(new URL(path, import.meta.url), imports);
+const collection = load("./route.ts");
+const detail = load("./[id]/route.ts");
+const actions = {
+  cancel: load("./[id]/cancel/route.ts"),
+  retry: load("./[id]/retry/route.ts"),
+  answer: load("./[id]/answer/route.ts"),
+  review: load("./[id]/review/route.ts"),
+};
+
+const headers = (origin = ORIGIN) => ({ host: "localhost", ...(origin ? { origin } : {}) });
+async function send(handler, url, { method = "POST", body, origin, id, raw } = {}) {
+  const init = { method, headers: headers(origin) };
+  if (body !== undefined || raw !== undefined) init.body = raw ?? JSON.stringify(body);
+  const response = await handler(new Request(`http://localhost${url}`, init), id ? { params: Promise.resolve({ id }) } : undefined);
+  return { status: response.status, body: await response.json(), headers: response.headers };
+}
+const create = (body, options) => send(collection.POST, "/api/assignments", { body, ...options });
+const act = (action, body, options = {}) =>
+  send(actions[action].POST, `/api/assignments/${options.id ?? ID}/${action}`, { body, id: options.id ?? ID, ...options });
+const rpcCalls = () => calls.filter((c) => c[0] === "rpc" && c[1] !== "reap_own_assignment_leases");
+const validCreate = { workspaceId: WS, sourceNoteId: NOTE, requestedOutcome: `  ${SECRET_TEXT}  `, contextNoteIds: [CTX] };
+
+// --- Create ---------------------------------------------------------------------
+
+test("create: calls create_assignment with the parsed body and returns 201", async () => {
+  const r = await create(validCreate);
+  assert.equal(r.status, 201);
+  assert.deepEqual(rpcCalls(), [["rpc", "create_assignment", {
+    p_workspace_id: WS, p_source_note_id: NOTE, p_requested_outcome: SECRET_TEXT, p_context_note_ids: [CTX],
+    p_executor_kind: "builtin", p_capabilities: null }]]);
+  assert.deepEqual(r.body.assignment, {
+    id: ID, workspaceId: WS, sourceNoteId: NOTE, requestedOutcome: SECRET_TEXT, executorKind: "builtin",
+    capabilities: ["assignment.execute", "workspace.read"], state: "queued", revision: 1, currentAttemptId: null,
+    maxAttempts: 1, errorCode: null, createdAt: "2026-10-14T00:00:00.000Z", updatedAt: "2026-10-14T00:00:00.000Z",
+    stateChangedAt: "2026-10-14T00:00:00.000Z", finishedAt: null });
+  assert.equal(r.headers.get("cache-control"), "private, no-store");
+});
+
+test("create: malformed bodies are 400 before any database call", async () => {
+  const many = Array.from({ length: 21 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
+  for (const body of [
+    {}, [], "x", { ...validCreate, requestedOutcome: "   " }, { ...validCreate, requestedOutcome: "x".repeat(4001) },
+    { ...validCreate, workspaceId: "nope" }, { ...validCreate, sourceNoteId: 5 }, { ...validCreate, contextNoteIds: many },
+    { ...validCreate, contextNoteIds: [CTX, CTX.toUpperCase()] }, { ...validCreate, contextNoteIds: ["x"] },
+    { ...validCreate, executor: "external" }, { ...validCreate, capabilities: ["item.write"] }, { ...validCreate, kind: "task" },
+  ]) {
+    const r = await create(body);
+    assert.deepEqual([r.status, r.body], [400, { error: "Invalid request", code: "invalid_payload" }], JSON.stringify(body).slice(0, 80));
+  }
+  assert.deepEqual((await create(undefined, { raw: "{not json" })).body.code, "invalid_payload");
+  const big = await create(undefined, { raw: JSON.stringify({ ...validCreate, requestedOutcome: "x".repeat(40000) }) });
+  assert.deepEqual([big.status, big.body.code], [413, "payload_too_large"]);
+  assert.equal(rpcCalls().length, 0);
+});
+
+test("mutations require a signed-in, same-origin request", async () => {
+  const mutations = [
+    (o) => create(validCreate, o),
+    (o) => act("cancel", { expectedRevision: 1 }, o),
+    (o) => act("retry", { expectedRevision: 1 }, o),
+    (o) => act("answer", { expectedRevision: 1, questionId: QID, answer: "Formal" }, o),
+    (o) => act("review", { expectedRevision: 1, artifactId: ART, decision: "accept" }, o),
+  ];
+  for (const run of mutations) {
+    for (const origin of [null, "https://evil.example"]) {
+      const r = await run({ origin });
+      assert.deepEqual([r.status, r.body], [403, { error: "Forbidden", code: "forbidden_origin" }]);
+    }
+    signedIn = false;
+    assert.deepEqual((await run({})).body, { error: "Signed out", code: "unauthenticated" });
+    assert.equal((await run({})).status, 401);
+    signedIn = true;
+  }
+  signedIn = false;
+  assert.equal((await send(collection.GET, `/api/assignments?workspaceId=${WS}`, { method: "GET" })).status, 401);
+  assert.equal((await send(detail.GET, `/api/assignments/${ID}`, { method: "GET", id: ID })).status, 401);
+  assert.equal(rpcCalls().length, 0);
+});
+
+// --- Error mapping -----------------------------------------------------------------
+
+test("database results map to the ADR 003 error contract with fixed messages", async () => {
+  const cases = [
+    [{ status: "not_found" }, 404, { code: "not_found" }],
+    [{ status: "invalid_payload" }, 400, { code: "invalid_payload" }],
+    [{ status: "invalid_context" }, 422, { code: "invalid_context" }],
+    [{ status: "capability_denied" }, 403, { code: "capability_denied" }],
+    [{ status: "agent_disabled" }, 403, { code: "agent_disabled" }],
+    [{ status: "artifact_superseded" }, 409, { code: "artifact_superseded" }],
+    [{ status: "active_assignment_exists", assignmentId: ID }, 409, { code: "active_assignment_exists", assignmentId: ID }],
+    [{ status: "conflict", currentRevision: "4", state: "running" }, 409, { code: "revision_conflict", currentRevision: 4, state: "running" }],
+    [{ status: "invalid_transition", from: "completed", to: "canceled", allowed: [] }, 409,
+      { code: "invalid_transition", from: "completed", to: "canceled", allowed: [] }],
+    [{ status: "lease_lost" }, 500, { code: "save_failed" }],
+    [null, 500, { code: "save_failed" }],
+    [{ status: "saved" }, 500, { code: "save_failed" }],
+  ];
+  for (const [data, status, expected] of cases) {
+    rpcResult = () => ({ data, error: null });
+    const r = await create(validCreate);
+    assert.equal(r.status, status, JSON.stringify(data));
+    assert.equal(typeof r.body.error, "string");
+    const { error: _message, ...rest } = r.body;
+    assert.deepEqual(rest, expected);
+    assert.doesNotMatch(JSON.stringify(r.body), /invoice|vendor/i, "no request content in errors");
+  }
+  rpcResult = () => ({ data: null, error: { message: `boom: ${SECRET_TEXT}` } });
+  const failed = await create(validCreate);
+  assert.deepEqual([failed.status, failed.body], [500, { error: "Could not save the assignment", code: "save_failed" }]);
+});
+
+// --- Transitions ---------------------------------------------------------------------
+
+test("cancel and retry call transition_assignment with their target state", async () => {
+  rpcResult = () => ({ data: { status: "saved", assignment: row({ state: "canceled", revision: 2 }) }, error: null });
+  const r = await act("cancel", { expectedRevision: 1 });
+  assert.deepEqual([r.status, r.body.assignment.state, r.body.assignment.revision], [200, "canceled", 2]);
+  await act("retry", { expectedRevision: 3 });
+  assert.deepEqual(rpcCalls().map((c) => c[2]), [
+    { p_id: ID, p_expected_revision: 1, p_to_state: "canceled", p_payload: null },
+    { p_id: ID, p_expected_revision: 3, p_to_state: "queued", p_payload: null },
+  ]);
+  for (const body of [{}, { expectedRevision: 0 }, { expectedRevision: "1" }, { expectedRevision: 1.5 }, { expectedRevision: 1, state: "completed" }])
+    assert.equal((await act("cancel", body)).status, 400);
+  assert.equal((await act("cancel", { expectedRevision: 1 }, { id: "not-a-uuid" })).status, 400);
+  assert.equal(rpcCalls().length, 2);
+});
+
+test("answer and review pass user-authored text through and validate it", async () => {
+  rpcResult = () => ({ data: { status: "saved", assignment: row(), reviewId: ART }, error: null });
+  await act("answer", { expectedRevision: 2, questionId: QID, answer: "  Formal  " });
+  const reviewed = await act("review", { expectedRevision: 3, artifactId: ART, decision: "request_changes", comment: " Shorter " });
+  assert.equal(reviewed.body.reviewId, ART);
+  await act("review", { expectedRevision: 4, artifactId: ART, decision: "reject" });
+  assert.deepEqual(rpcCalls().map((c) => [c[1], c[2]]), [
+    ["answer_assignment_question", { p_id: ID, p_expected_revision: 2, p_question_id: QID, p_answer: "Formal" }],
+    ["review_assignment_artifact", { p_id: ID, p_expected_revision: 3, p_artifact_id: ART, p_decision: "request_changes", p_comment: "Shorter" }],
+    ["review_assignment_artifact", { p_id: ID, p_expected_revision: 4, p_artifact_id: ART, p_decision: "reject", p_comment: null }],
+  ]);
+  for (const body of [
+    { expectedRevision: 1, questionId: QID, answer: "" }, { expectedRevision: 1, questionId: "q", answer: "x" },
+    { expectedRevision: 1, questionId: QID, answer: "x".repeat(4001) },
+  ])
+    assert.equal((await act("answer", body)).status, 400);
+  for (const body of [
+    { expectedRevision: 1, artifactId: ART, decision: "request_changes" },
+    { expectedRevision: 1, artifactId: ART, decision: "request_changes", comment: "  " },
+    { expectedRevision: 1, artifactId: ART, decision: "approve" },
+    { expectedRevision: 1, artifactId: ART, decision: "accept", comment: 5 },
+  ])
+    assert.equal((await act("review", body)).status, 400);
+  assert.equal(rpcCalls().length, 3);
+});
+
+// --- Reads ------------------------------------------------------------------------------
+
+test("list: one workspace, optional state filter, reaps the caller's leases first", async () => {
+  const r = await send(collection.GET, `/api/assignments?workspaceId=${WS}&state=queued,running`, { method: "GET" });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.assignments.map((a) => a.id), [ID]);
+  assert.equal(calls[0][1], "reap_own_assignment_leases");
+  assert.deepEqual(calls.find((c) => c[0] === "in"), ["in", "assignments", "state", ["queued", "running"]]);
+  for (const query of ["", "?workspaceId=x", `?workspaceId=${WS}&state=done`, `?workspaceId=${WS}&limit=0`, `?workspaceId=${WS}&limit=101`])
+    assert.equal((await send(collection.GET, `/api/assignments${query}`, { method: "GET" })).status, 400, query);
+  tables.workspaces = [];
+  const missing = await send(collection.GET, `/api/assignments?workspaceId=${WS}`, { method: "GET" });
+  assert.deepEqual([missing.status, missing.body.code], [404, "not_found"]);
+});
+
+test("detail: children of one assignment, never the lease token", async () => {
+  const r = await send(detail.GET, `/api/assignments/${ID}`, { method: "GET", id: ID });
+  assert.equal(r.status, 200);
+  assert.deepEqual(Object.keys(r.body).sort(), ["artifacts", "assignment", "attempts", "context", "events", "questions", "reviews"]);
+  assert.deepEqual(r.body.context, [{ noteId: CTX, position: 1, revisionAtSelection: 3, contentRole: "untrusted_data" }]);
+  assert.equal(r.body.events[0].id, "9");
+  assert.equal(r.body.questions[0].prompt, "Which tone?");
+  assert.equal(r.body.attempts[0].status, "waiting");
+  const selects = calls.filter((c) => c[0] === "select").map((c) => c[2]).join(",");
+  assert.doesNotMatch(selects, /lease_token/);
+  assert.doesNotMatch(JSON.stringify(r.body), /lease_?token/i);
+  const missing = await send(detail.GET, `/api/assignments/${ART}`, { method: "GET", id: ART });
+  assert.deepEqual([missing.status, missing.body.code], [404, "not_found"]);
+  assert.equal((await send(detail.GET, "/api/assignments/x", { method: "GET", id: "x" })).status, 400);
+});

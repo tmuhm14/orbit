@@ -179,14 +179,18 @@ Rules that apply across transitions:
 - **Completion of the source task is never automatic.** T11 does not touch `notes.completed_at`; the UI offers "Mark task done" as a separate, ordinary revisioned write.
 - **Cancellation is immediate and fenced.** T8 revokes the attempt lease. Any later executor call with the old `lease_token` gets `lease_lost` and writes nothing, so a still-running built-in loop cannot submit after cancel.
 - **Interim behavior before A-04 (durable runtime).** `max_attempts = 1`, no T7; a lease that expires without a heartbeat goes to `failed` with `timed_out` (T6) through a reaper that runs on reads (the pattern used in `GET /api/agent/runs`) and on the scheduler tick. This satisfies "a timed-out execution must surface failure rather than appear to work forever."
-- **At most one non-terminal assignment per source task** (partial unique index on `source_note_id where state in ('queued', 'running', 'needs_input', 'needs_review')`). Open question 2.
+- **Lease and heartbeat.** The interim built-in executor uses a 90 s lease and a 30 s heartbeat, under the route's `maxDuration = 300`. **Decided by Tony, 2026-10-14.**
+- **Any item kind may be delegated** (`note`, `task`, `project`, `document`, `followup`), not only tasks and follow-ups. **Decided by Tony, 2026-10-14.**
+- **At most one non-terminal assignment per source item** (partial unique index on `source_note_id where state in ('queued', 'running', 'needs_input', 'needs_review')`); parallel assignments on one item are not allowed. **Decided by Tony, 2026-10-14.**
+- **Workspace moves of referenced items.** Moving an item to another workspace is refused only while it is the source or a context item of a non-terminal assignment (`queued`, `running`, `needs_input`, `needs_review`); a `before update of workspace_id` trigger on `notes` raises `assignment_active`, which `save_notes` reports as its per-item `invalid_note` (a distinct code would need changes to `save_notes`/`note_link_error` and the notes routes). Finished assignments (`completed`, `failed`, `canceled`) don't block the move: the same trigger first detaches them, setting `source_note_id` or the context row's `note_id` to null and appending an `item_detached` event, while the assignment keeps its history, artifacts, stored outcome and context rows. The composite keys stay `on update restrict` as a backstop. **Decided by Tony, 2026-10-14.**
+- **Reject maps to `canceled`** (T13) with a recorded `reject` review, so "the user declined the result" is never confused with "the system failed". **Decided by Tony, 2026-10-14.**
 - **Per-workspace concurrency** for the built-in executor: one `running` attempt per workspace, mirroring the existing `409 "The agent is already working here"` check for organizing runs.
 
 ### 3. Attempts, events, artifacts, reviews
 
 - **Attempts** are execution tries. Assignment `state` is the user-facing lifecycle; attempt `status` is execution bookkeeping. A `needs_input` answer or `request_changes` creates a *new* attempt on the next claim; prior attempts and their artifacts are retained.
 - **Events** are the progress timeline for U-04/U-05 and the audit trail. Payloads hold ids, codes and short executor progress strings (≤ 280 chars, treated as untrusted when rendered). They never hold prompts, model transcripts or note bodies.
-- **Artifacts** hold the prepared draft or summary. Only the latest non-superseded artifact can be reviewed; reviewing a superseded one returns `artifact_superseded`.
+- **Artifacts** hold the prepared draft or summary. Only the latest non-superseded artifact can be reviewed; reviewing a superseded one returns `artifact_superseded`. Artifacts are **kept forever** after accept, reject or cancel; there is no purge (they go only with their assignment, workspace or account). **Decided by Tony, 2026-10-14.**
 - **Reviews** record each decision with the artifact it judged. `request_changes` requires a comment; that comment and question answers are user-authored instructions and join `requested_outcome` as the only intent the executor may act on.
 
 ### 4. Error contract
@@ -203,13 +207,13 @@ Routes return `{ error: string, code: string, ... }`. `error` is generic.
 | 409 | `executor_busy` | Workspace concurrency limit |
 | 409 | `lease_lost` | Executor call with an expired, revoked or superseded lease |
 | 409 | `artifact_superseded` | Review of a non-latest artifact |
-| 422 | `invalid_context` | Context item not in the assignment's workspace, or source item not `kind in ('task', 'followup')` |
+| 422 | `invalid_context` | Context item not in the assignment's workspace (any kind of source item may be delegated, decided by Tony, 2026-10-14) |
 | 403 | `capability_denied` | Requested capability not allowed for the executor (ADR 004) |
 | 403 | `agent_disabled` | `workspaces.agent_enabled = false` or no usable model key (reuses `createRun()` checks) |
 
 Normalized failure codes stored in `error_code` and shown to the user: `provider_auth`, `provider_rate_limited`, `provider_unavailable`, `budget_exhausted`, `timed_out`, `context_unavailable`, `capability_revoked`, `executor_unavailable`, `internal`. Raw provider messages are never stored or shown; `ProviderError` from `lib/agent/providers.ts` maps to a code.
 
-Item-side effects: `DELETE /api/notes/:id` and workspace moves on a source task with a non-terminal assignment return `409 has_active_assignment` (the user cancels first). Deleting a context item is allowed; the executor records `context_unavailable` and continues with the rest, or fails if none remain.
+Item-side effects: a workspace move of an item used by a non-terminal assignment is refused (§2, decided by Tony, 2026-10-14), surfaced as `invalid_note` until the notes routes add a distinct code. `DELETE /api/notes/:id` on a source task with a non-terminal assignment returning `409 has_active_assignment` is not implemented yet (it needs a notes-route change); today the delete succeeds and the assignment detaches. Deleting a context item is allowed; the executor records `context_unavailable` and continues with the rest, or fails if none remain.
 
 ### 5. Functions and routes
 
@@ -273,12 +277,8 @@ After `accept`, the user can save the artifact as an item: `kind = 'document'`, 
 - **State only, no attempts table.** Loses retry/lease history and makes fencing awkward. Rejected.
 - **Events as the source of truth (event sourcing).** Strong audit, but heavy for the first release and harder to query for Home. Rejected; state row plus append-only events instead.
 - **Questions and reviews as events only.** Possible, but a table with a unique "one open question" index makes the invariant enforceable. Rejected.
-- **Reject → `failed`.** Conflates "the system failed" with "the user declined the result". Proposed: reject → `canceled` with a `reject` review (open question 3).
+- **Reject → `failed`.** Conflates "the system failed" with "the user declined the result". Rejected: reject → `canceled` with a `reject` review (decided by Tony, 2026-10-14).
 
 ## Open questions
 
-1. **Allowed source kinds.** Proposed: `task` and `followup` only; should `project` be delegable? *Decider: product.*
-2. **One active assignment per task** — keep, or allow parallel assignments? *Decider: product.*
-3. **Reject maps to `canceled`** (with a `reject` review) — confirm. *Decider: Tony.*
-4. **Artifact retention** after reject/cancel (keep forever, 30 days, or until the task is deleted). *Decider: Tony.*
-5. **Lease length and heartbeat interval** for the interim built-in executor (proposed 90 s lease, 30 s heartbeat, under the route's `maxDuration = 300`). *Owner: Agents.*
+None. The five open questions (allowed source kinds, one active assignment per item, reject → `canceled`, artifact retention, lease and heartbeat) were decided by Tony on 2026-10-14 and are recorded in §2 and §3.

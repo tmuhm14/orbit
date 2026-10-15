@@ -2,18 +2,21 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { loadTs } from "../../../../../tests/load-ts.mjs";
 
-// The daily purge of agent action values (ADR 002 §5) runs from one fixed
-// tick slot. Doubles only: no database or scheduled reports run here.
+// The daily purge of agent action values (ADR 002 §5) and the assignment
+// lease reaper (ADR 003 §2) each run from one fixed tick slot. Doubles only:
+// no database or scheduled reports run here.
 let rpcCalls;
 let rpcResult;
+let reapResult;
 beforeEach(() => {
   rpcCalls = [];
   rpcResult = { data: 2, error: null };
+  reapResult = { data: { timedOut: 1, unavailable: 0 }, error: null };
   process.env.CRON_SECRET = "synthetic-secret";
 });
 
 const admin = {
-  rpc: async (name) => (rpcCalls.push(name), rpcResult),
+  rpc: async (name) => (rpcCalls.push(name), name === "reap_assignment_leases" ? reapResult : rpcResult),
   from: () => {
     const q = { select: () => q, eq: () => q, returns: async () => ({ data: [], error: null }) };
     return q;
@@ -33,7 +36,7 @@ const tick = async (slot, secret = "synthetic-secret") => {
 
 test("purges agent action values once a day, from slot 03 only", async () => {
   for (let hour = 0; hour < 24; hour++) await tick(String(hour).padStart(2, "0"));
-  assert.deepEqual(rpcCalls, ["purge_agent_action_values"]);
+  assert.deepEqual(rpcCalls.filter((n) => n === "purge_agent_action_values"), ["purge_agent_action_values"]);
   const again = await tick("03");
   assert.deepEqual(again, { status: 200, body: { completed: 0, failed: 0, purged: 2 } });
   assert.equal((await tick("04")).body.purged, undefined);
@@ -53,4 +56,25 @@ test("a failed purge does not stop the tick, and unauthorized ticks do nothing",
   rpcCalls = [];
   assert.equal((await tick("03", "wrong")).status, 401);
   assert.deepEqual(rpcCalls, []);
+});
+
+test("reaps assignment leases once a day, from slot 04 only", async () => {
+  const bodies = [];
+  for (let hour = 0; hour < 24; hour++) bodies.push((await tick(String(hour).padStart(2, "0"))).body);
+  assert.deepEqual(rpcCalls.filter((n) => n === "reap_assignment_leases"), ["reap_assignment_leases"]);
+  assert.deepEqual(bodies[4], { completed: 0, failed: 0, reaped: { timedOut: 1, unavailable: 0 } });
+  assert.ok(bodies.every((b, hour) => hour === 4 || b.reaped === undefined));
+});
+
+test("a failed reap does not stop the tick and logs no detail", async () => {
+  reapResult = { data: null, error: { message: "boom" } };
+  const errors = [];
+  const original = console.error;
+  console.error = (...args) => errors.push(args);
+  try {
+    assert.deepEqual(await tick("04"), { status: 200, body: { completed: 0, failed: 0, reaped: null } });
+  } finally {
+    console.error = original;
+  }
+  assert.deepEqual(errors, [["assignment lease reap failed"]]);
 });

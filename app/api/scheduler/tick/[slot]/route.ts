@@ -11,6 +11,28 @@ export const runtime = "nodejs";
 // tick is harmless.
 const PURGE_SLOT = "03";
 
+// Assignment leases (ADR 003 §2): before durable execution, an expired lease
+// ends in failed/timed_out, and queued built-in work whose executor is
+// unavailable fails with executor_unavailable. Assignment reads reap the
+// caller's own rows; this daily slot is the backstop for everyone else.
+// Repeating it is harmless.
+const REAP_SLOT = "04";
+
+type Admin = NonNullable<ReturnType<typeof createAdminClient>>;
+
+async function reapAssignmentLeases(admin: Admin) {
+  try {
+    const { data, error } = await admin.rpc("reap_assignment_leases");
+    if (error) throw new Error("reap failed");
+    const counts = (data ?? {}) as { timedOut?: number; unavailable?: number };
+    return { timedOut: Number(counts.timedOut) || 0, unavailable: Number(counts.unavailable) || 0 };
+  } catch {
+    // Counts only; never ids or content.
+    console.error("assignment lease reap failed");
+    return null;
+  }
+}
+
 async function purgeAgentActionValues(admin: NonNullable<ReturnType<typeof createAdminClient>>) {
   try {
     const { data, error } = await admin.rpc("purge_agent_action_values");
@@ -36,6 +58,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slot
   const admin = createAdminClient();
   if (!admin) return new Response("Unavailable", { status: 503 });
   const purged = slot === PURGE_SLOT ? await purgeAgentActionValues(admin) : undefined;
+  const reaped = slot === REAP_SLOT ? await reapAssignmentLeases(admin) : undefined;
   const { data: tasks, error } = await admin.from("scheduled_tasks")
     .select("id,user_id,name,kind,enabled,timezone,delivery_hour,cadence,jira_projects,github_repos,created_at")
     .eq("enabled", true).returns<ScheduledTask[]>();
@@ -51,5 +74,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ slot
       failed++;
     }
   }
-  return Response.json({ completed, failed, ...(purged !== undefined ? { purged } : {}) });
+  return Response.json({
+    completed,
+    failed,
+    ...(purged !== undefined ? { purged } : {}),
+    ...(reaped !== undefined ? { reaped } : {}),
+  });
 }
