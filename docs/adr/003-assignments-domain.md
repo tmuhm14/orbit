@@ -264,6 +264,17 @@ After `accept`, the user can save the artifact as an item: `kind = 'document'`, 
 - Never log `requested_outcome`, questions, answers, artifacts, review comments or model output. Logs carry assignment/attempt ids, state and `error_code` only. `lease_token` is a credential and is never logged or returned to browsers.
 - External-agent reads of artifacts are recorded in the grant audit trail (ADR 004).
 
+## Implementation notes (A-02, 2026-10-15)
+
+These record how the built-in preparation executor implements this decision; they don't change it. Details and constants are in `docs/api/assignments.md` ("Built-in executor").
+
+- **No migration.** A-02 uses only the A-01 executor functions. Attempt `provider`, `model` and `usage` stay null because no executor function sets them; recording them would need a small additive function (follow-up).
+- **Tools** (§7): `submit_result` and `ask_question` only. The executor gets the source and selected context as data up front instead of a read tool, which is the same scope (ids from `assignment_context_items` plus the source) with fewer model turns.
+- **Codes** (§4): an attempt that uses up its own wall-clock budget fails with `budget_exhausted`, because `fail_assignment_attempt` reserves `timed_out` for the reaper (T6). `timed_out` therefore means "stopped heartbeating". A missing or unreadable key and a disabled workspace fail before claiming with `executor_unavailable` (T15) rather than `agent_disabled`, which is a route code, not a stored failure code. The kill switch is re-checked before each model turn after the first and maps to `capability_revoked` (T5).
+- **Context** (§4, §8): deleted context items are skipped with a content-free progress event (`N selected items are no longer available`) rather than a `context_unavailable` event, because no service-role function appends that event type; with no item left the attempt fails with `context_unavailable`.
+- **Recovery** (ADR 005 tier 2): besides `after()` in the queuing routes, `POST /api/assignments/kickoff` (client ping) and every scheduler tick restart queued built-in work whose kickoff was lost. `claim_assignment`'s queued-only guard and per-workspace limit make duplicate starts no-ops.
+- **Artifacts** (§6): content is a Tiptap document converted from the model's markdown (safe subset, no links or HTML) and `plain_text` holds the markdown. Saving as a document item stays with U-05.
+
 ## Consequences
 
 - One clear lifecycle drives U-04/U-05 and survives refresh (state is in Postgres).
