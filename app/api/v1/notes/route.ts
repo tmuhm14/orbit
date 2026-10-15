@@ -5,7 +5,7 @@ import { toRow } from "@/lib/notes-db";
 
 /** Database field names; additive, so this stays /api/v1. */
 const V1_COLUMNS =
-  "id,workspace_id,title,plain_text,bucket,tags,created_at,updated_at,completed_at,revision,kind,project_id";
+  "id,workspace_id,title,plain_text,bucket,tags,created_at,updated_at,completed_at,revision,kind,project_id,waiting_on,waiting_for,next_check_on";
 
 async function allowed(auth: Exclude<Awaited<ReturnType<typeof integrationUser>>, { error: Response }>, id: string) {
   const { data, error } = await auth.supabase.from("workspaces").select("id")
@@ -64,7 +64,15 @@ export async function POST(request: Request) {
   // Before direct writes are revoked (ADR 002 phase C′) this moves to
   // save_notes() with expected_revision null. Captures never send kind or
   // project_id; the column defaults make them unlinked notes (ADR 001 §2).
-  const { kind: _kind, project_id: _project, ...row } = toRow(note, auth.user.id);
+  // Nor follow-up fields: a capture starts without one (ADR 001 §4).
+  const {
+    kind: _kind,
+    project_id: _project,
+    waiting_on: _waitingOn,
+    waiting_for: _waitingFor,
+    next_check_on: _nextCheckOn,
+    ...row
+  } = toRow(note, auth.user.id);
   const { error } = await auth.supabase.from("notes").insert(row);
   if (error) return reply({ error: "Could not capture note" }, 500);
   return reply({ id: note.id, workspaceId: note.workspaceId, bucket: note.bucket, revision: 1 }, 201);
