@@ -1,8 +1,9 @@
 "use client";
 
-import { AlertCircle, ChevronRight } from "lucide-react";
+import { AlertCircle, ChevronRight, Info } from "lucide-react";
 import type { AssignmentState } from "@/lib/assignments/transitions";
 import { STATE_LABELS, errorCopy } from "@/lib/assignment-view";
+import { availabilityCopy, type Availability } from "@/lib/agents-view";
 
 /** A small dot + label for an assignment state. */
 export function AssignmentStateBadge({ state }: { state: AssignmentState }) {
@@ -99,6 +100,54 @@ export function AssignmentErrorNotice({
             <button type="button" className="text-button" onClick={actions.onRetry}>
               Try again
             </button>
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Up-front "Turn on the agent…" note when delegation can't go ahead in this
+ * space (agent off, no model key, unreadable key), with the same links as
+ * the submit-time error. Renders nothing while availability is unknown.
+ */
+export function AgentAvailabilityNotice({
+  availability,
+  id,
+  compact = false,
+  onOpenSettings,
+  onOpenAgent,
+}: {
+  availability: Availability | null;
+  id?: string;
+  compact?: boolean;
+} & Pick<ErrorNoticeActions, "onOpenSettings" | "onOpenAgent">) {
+  const copy = availabilityCopy(availability);
+  if (!copy) return null;
+  return (
+    <div className={`agent-availability ${compact ? "is-compact" : ""}`} id={id}>
+      <Info size={14} aria-hidden="true" />
+      <div>
+        <p>{copy.message}</p>
+        {((copy.settings && onOpenSettings) || (copy.agent && onOpenAgent)) && (
+          <p className="assignment-error-links">
+            {copy.settings && onOpenSettings && (
+              <a
+                href="/settings"
+                onClick={(e) => {
+                  e.preventDefault();
+                  onOpenSettings();
+                }}
+              >
+                Save a model key in Settings
+              </a>
+            )}
+            {copy.agent && onOpenAgent && (
+              <button type="button" className="text-button" onClick={onOpenAgent}>
+                Turn on the agent for this space
+              </button>
+            )}
           </p>
         )}
       </div>

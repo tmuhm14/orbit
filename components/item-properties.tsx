@@ -18,10 +18,11 @@ import { defaultTimeZone, localToday } from "@/lib/reminders";
 import { FOLLOWUP_COPY, KIND_LABELS } from "@/lib/item-properties";
 import { isActiveState } from "@/lib/assignment-view";
 import { AssignmentDetailDialog } from "./assignment-detail";
-import { AssignmentChip } from "./assignment-status";
+import { AgentAvailabilityNotice, AssignmentChip } from "./assignment-status";
 import { DelegateDialog } from "./delegate-dialog";
 import { ProjectPicker } from "./project-picker";
-import { useItemAssignment } from "./use-assignment";
+import { useAvailability, useItemAssignment } from "./use-assignment";
+import { useWorkspaceShell } from "./workspace-shell-context";
 import { ReminderControl } from "./reminder-control";
 import type { useNotes } from "./use-notes";
 
@@ -301,6 +302,9 @@ export function AssignmentField({
 }) {
   const id = useId();
   const { assignment, loaded, adopt, refresh } = useItemAssignment(note.workspaceId, note.id);
+  const { agentEnabled, assignmentChanged } = useWorkspaceShell();
+  // Explained before Delegate is pressed; reloads when the agent switch flips.
+  const { availability } = useAvailability(note.workspaceId, agentEnabled);
   const [delegating, setDelegating] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const active = !!assignment && isActiveState(assignment.state);
@@ -325,14 +329,24 @@ export function AssignmentField({
           )}
         </div>
         {!canDelegate && <p className="property-hint">Move this item into a space to delegate it.</p>}
+        {canDelegate && !active && (
+          <AgentAvailabilityNotice
+            availability={availability}
+            compact
+            onOpenSettings={onOpenSettings}
+            onOpenAgent={onOpenAgent}
+          />
+        )}
       </div>
       {delegating && (
         <DelegateDialog
           note={note}
           notes={api.notes}
+          availability={availability}
           onClose={() => setDelegating(false)}
           onCreated={(created) => {
             adopt(created);
+            assignmentChanged(created);
             setDelegating(false);
             setDetailId(created.id);
           }}

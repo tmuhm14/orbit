@@ -29,6 +29,7 @@ export const config = {
     "/",
     "/settings",
     "/scheduled",
+    "/agents",
     "/login",
     "/auth/:path*",
     "/slack/:path*",

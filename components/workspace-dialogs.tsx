@@ -4,12 +4,15 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Layers } from "lucide-react";
 import type { Note, Workspace as WorkspaceInfo } from "@/lib/notes";
+import type { Assignment } from "@/lib/assignments/types";
 import { AgentDialog } from "./agent-dialog";
+import { AssignmentDetailDialog } from "./assignment-detail";
 import { GuideDialog } from "./guide-dialog";
 import type { ItemApi } from "./item-properties";
 import { NoteEditor } from "./note-editor";
 import { ScheduledDialog } from "./scheduled-dialog";
 import { SearchDialog } from "./search-dialog";
+import type { ToastAction } from "./workspace-shell-context";
 
 /** Open/closed state for the workspace's modal dialogs. */
 export function useWorkspaceDialogs(initialSearchOpen: boolean) {
@@ -18,7 +21,11 @@ export function useWorkspaceDialogs(initialSearchOpen: boolean) {
   const [agentOpen, setAgentOpen] = useState(false);
   const [scheduledOpen, setScheduledOpen] = useState(false);
   const [scheduledRefreshToken, setScheduledRefreshToken] = useState(0);
+  /** The assignment detail opened from the Agents page or Home (not the editor's own). */
+  const [assignmentId, setAssignmentId] = useState<string | null>(null);
   return {
+    assignmentId,
+    setAssignmentId,
     searchOpen,
     setSearchOpen,
     guideOpen,
@@ -39,19 +46,23 @@ export function useWorkspaceDialogs(initialSearchOpen: boolean) {
       setGuideOpen(false);
       setAgentOpen(false);
       setScheduledOpen(false);
+      setAssignmentId(null);
     },
-    anyOpen: searchOpen || guideOpen || agentOpen || scheduledOpen,
+    anyOpen: searchOpen || guideOpen || agentOpen || scheduledOpen || assignmentId !== null,
   };
 }
 
 export type WorkspaceDialogsState = ReturnType<typeof useWorkspaceDialogs>;
 
+/** A toast: plain text, or text with one action (shown longer so it can be used). */
+export type ToastValue = string | { message: string; action: ToastAction };
+
 /** Auto-dismissing status toast. */
 export function useToast() {
-  const [toast, setToast] = useState("");
+  const [toast, setToast] = useState<ToastValue>("");
   useEffect(() => {
     if (!toast) return;
-    const timer = setTimeout(() => setToast(""), 3500);
+    const timer = setTimeout(() => setToast(""), typeof toast === "string" ? 3500 : 8000);
     return () => clearTimeout(timer);
   }, [toast]);
   return [toast, setToast] as const;
@@ -165,6 +176,8 @@ export function WorkspaceDialogs({
   onCloseNote,
   onToggleAgent,
   onAgentNotesChanged,
+  onAssignmentChange,
+  onDismissToast,
 }: {
   dialogs: WorkspaceDialogsState;
   currentNote: Note | undefined;
@@ -181,13 +194,15 @@ export function WorkspaceDialogs({
   search: string;
   onSearchChange: (value: string) => void;
   searchRef: RefObject<HTMLInputElement | null>;
-  toast: string;
+  toast: ToastValue;
   onToast: (message: string) => void;
   onUpdateNote: (patch: Partial<Note>) => void;
   onDeleteNote: () => void;
   onCloseNote: () => void;
   onToggleAgent: (enabled: boolean) => Promise<unknown>;
   onAgentNotesChanged: () => void;
+  onAssignmentChange: (assignment: Assignment) => void;
+  onDismissToast: () => void;
 }) {
   const router = useRouter();
   return (
@@ -232,6 +247,28 @@ export function WorkspaceDialogs({
           onClose={() => dialogs.setSearchOpen(false)}
         />
       )}
+      {dialogs.assignmentId && (
+        <AssignmentDetailDialog
+          key={dialogs.assignmentId}
+          assignmentId={dialogs.assignmentId}
+          notes={api.notes}
+          onClose={() => dialogs.setAssignmentId(null)}
+          onChange={onAssignmentChange}
+          onOpenNote={(id) => {
+            dialogs.setAssignmentId(null);
+            onOpenNote(id);
+          }}
+          onOpenAssignment={dialogs.setAssignmentId}
+          onOpenSettings={() => {
+            dialogs.setAssignmentId(null);
+            router.push("/settings");
+          }}
+          onOpenAgent={() => {
+            dialogs.setAssignmentId(null);
+            dialogs.setAgentOpen(true);
+          }}
+        />
+      )}
       {dialogs.guideOpen && <GuideDialog onClose={() => dialogs.setGuideOpen(false)} />}
       {dialogs.agentOpen && (
         <AgentDialog
@@ -253,11 +290,23 @@ export function WorkspaceDialogs({
         />
       )}
       {toast && (
-        <div className="toast" role="status">
+        <div className={`toast ${typeof toast === "string" ? "" : "has-action"}`} role="status">
           <span>
             <Check size={14} />
           </span>
-          {toast}
+          {typeof toast === "string" ? toast : toast.message}
+          {typeof toast !== "string" && (
+            <button
+              type="button"
+              className="toast-action"
+              onClick={() => {
+                onDismissToast();
+                toast.action.onAction();
+              }}
+            >
+              {toast.action.label}
+            </button>
+          )}
         </div>
       )}
     </>

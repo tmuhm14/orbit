@@ -18,7 +18,7 @@ export function WorkspaceTopbar({
   onOpenScheduled: () => void;
   onOpenAgent: () => void;
 }) {
-  const { view, search, settingsPage, scheduledPage, loaded, loadError, newNote } =
+  const { view, search, settingsPage, scheduledPage, agentsPage, loaded, loadError, newNote } =
     useWorkspaceShell();
   const bucket = BUCKETS.find((b) => b.id === view);
   return (
@@ -34,7 +34,7 @@ export function WorkspaceTopbar({
         <WorkspaceSwitcher variant="pill" {...switcherProps} />
         <ChevronRight size={13} />
         <strong className="breadcrumb-current">
-          {settingsPage ? "Settings" : scheduledPage ? "Scheduled jobs" : search
+          {settingsPage ? "Settings" : scheduledPage ? "Scheduled jobs" : agentsPage ? "Agents" : search
             ? "Search"
             : bucket?.name ||
               (view === "completed"
@@ -61,7 +61,7 @@ export function WorkspaceTopbar({
         >
           <Bot size={18} />
         </button>
-        {!settingsPage && !scheduledPage && <button
+        {!settingsPage && !scheduledPage && !agentsPage && <button
           className="primary-button small topbar-new-note"
           onClick={newNote}
           disabled={!loaded || loadError}

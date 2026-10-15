@@ -9,15 +9,30 @@ import {
   itemPollDelay,
   refetchOn,
 } from "@/lib/assignment-view";
+import { assignmentApi } from "@/lib/assignment-api";
+import {
+  HISTORY_PAGE,
+  OPEN_STATES,
+  homePollDelay,
+  historyStates,
+  mergeAssignment,
+  nextHistoryLimit,
+  pagePollDelay,
+  type Availability,
+  type HistoryFilter,
+} from "@/lib/agents-view";
 
 /** One client for the page; same-origin cookie session. */
 export const assignments = assignmentsClient();
+/** U-05 routes (save-document, availability, list by source item). */
+// TODO(U-05 backend): switch to assignmentsClient once merged.
+export const assignmentsU05 = assignmentApi();
 
 export const errorCodeOf = (error: unknown) =>
   error instanceof AssignmentApiError ? error.code : "unexpected_response";
 
 /** Whether the tab is hidden; polling pauses while it is. */
-function useHidden() {
+export function useHidden() {
   const [hidden, setHidden] = useState(false);
   useEffect(() => {
     const update = () => setHidden(document.visibilityState === "hidden");
@@ -50,8 +65,9 @@ export function useItemAssignment(workspaceId: string, noteId: string) {
   const refresh = useCallback(async () => {
     if (!workspaceId) return;
     try {
-      // TODO(client): filter by source item once the list route supports it.
-      const list = await assignments.list(workspaceId, { limit: 100 });
+      // Narrowed to this item by the server; currentAssignmentFor still
+      // filters, so a server that ignores sourceNoteId stays correct.
+      const list = await assignmentsU05.list(workspaceId, { sourceNoteId: noteId, limit: 100 });
       if (!alive.current) return;
       setAssignment(currentAssignmentFor(list, noteId));
       setErrorCode(null);
@@ -205,4 +221,195 @@ export function useNow(enabled: boolean, intervalMs = 5_000) {
     return () => clearInterval(timer);
   }, [enabled, intervalMs]);
   return now;
+}
+
+/** Calls `fn` whenever the tab becomes visible again. */
+function useOnVisible(fn: () => void) {
+  const ref = useRef(fn);
+  ref.current = fn;
+  useEffect(() => {
+    const onChange = () => {
+      if (document.visibilityState === "visible") ref.current();
+    };
+    document.addEventListener("visibilitychange", onChange);
+    return () => document.removeEventListener("visibilitychange", onChange);
+  }, []);
+}
+
+/**
+ * Whether delegation can go ahead in this space, so the delegate dialog and
+ * the editor's Agent row can explain up front. Reloads when `key` changes
+ * (the agent switch) and when the tab becomes visible. Null while unknown
+ * or when the server can't say; callers then rely on the submit-time error.
+ */
+export function useAvailability(workspaceId: string, key?: unknown) {
+  const [availability, setAvailability] = useState<Availability | null>(null);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  const refresh = useCallback(async () => {
+    if (!workspaceId) return;
+    try {
+      const next = await assignmentsU05.availability(workspaceId);
+      if (alive.current) setAvailability(next);
+    } catch {
+      if (alive.current) setAvailability(null);
+    }
+  }, [workspaceId]);
+  useEffect(() => {
+    void refresh();
+  }, [refresh, key]);
+  useOnVisible(() => void refresh());
+  return { availability, refresh };
+}
+
+/**
+ * The Agents page's data for one space: open work (needs you, in progress)
+ * in one request and history (filtered, limited with "Show more") in
+ * another. Polls only while something is queued or running and the tab is
+ * visible; reloads when `version` changes (a detail dialog changed
+ * something) and when the tab becomes visible.
+ */
+export function useWorkspaceAssignments(workspaceId: string, version = 0) {
+  const [open, setOpen] = useState<Assignment[]>([]);
+  const [past, setPast] = useState<Assignment[]>([]);
+  const [filter, setFilterState] = useState<HistoryFilter>("all");
+  const [limit, setLimit] = useState(HISTORY_PAGE);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
+  const [failures, setFailures] = useState(0);
+  const [tick, setTick] = useState(0);
+  const [space, setSpace] = useState(workspaceId);
+  const hidden = useHidden();
+  const alive = useRef(true);
+  const seq = useRef(0);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
+  // A different space starts over (adjusting state while rendering).
+  if (space !== workspaceId) {
+    setSpace(workspaceId);
+    setOpen([]);
+    setPast([]);
+    setLimit(HISTORY_PAGE);
+    setFilterState("all");
+    setErrorCode(null);
+  }
+
+  const refresh = useCallback(async () => {
+    if (!workspaceId) return;
+    const mine = ++seq.current;
+    try {
+      const [nextOpen, nextPast] = await Promise.all([
+        assignmentsU05.list(workspaceId, { states: OPEN_STATES, limit: 100 }),
+        assignmentsU05.list(workspaceId, { states: historyStates(filter), limit }),
+      ]);
+      // A newer request (another space, filter or limit) wins.
+      if (!alive.current || mine !== seq.current) return;
+      setOpen(nextOpen);
+      setPast(nextPast);
+      setErrorCode(null);
+      setFailures(0);
+      setLoadedFor(workspaceId);
+    } catch (error) {
+      if (!alive.current || mine !== seq.current) return;
+      setErrorCode(errorCodeOf(error));
+      setFailures((f) => f + 1);
+    } finally {
+      if (alive.current) setTick((t) => t + 1);
+    }
+  }, [workspaceId, filter, limit]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh, version]);
+  useOnVisible(() => void refresh());
+
+  const delay = pagePollDelay(open, { hidden, failures });
+  useEffect(() => {
+    if (delay === null) return;
+    const timer = setTimeout(() => void refresh(), delay);
+    return () => clearTimeout(timer);
+  }, [delay, tick, refresh]);
+
+  /** A fresher copy from the detail dialog, into whichever list holds it now. */
+  const adopt = useCallback((next: Assignment) => {
+    const isOpen = OPEN_STATES.includes(next.state);
+    setOpen((list) => (isOpen ? mergeAssignment(list, next) : list.filter((a) => a.id !== next.id)));
+    setPast((list) => (isOpen ? list.filter((a) => a.id !== next.id) : list));
+  }, []);
+
+  const more = nextHistoryLimit(limit);
+  const setFilter = useCallback((next: HistoryFilter) => {
+    setFilterState(next);
+    setLimit(HISTORY_PAGE);
+  }, []);
+  return {
+    open,
+    history: past,
+    filter,
+    setFilter,
+    /** The route may have more history than shown. */
+    hasMore: past.length >= limit && more !== null,
+    /** At the route's cap: say so rather than pretend there's nothing older. */
+    capped: past.length >= limit && more === null,
+    showMore: () => {
+      if (more !== null) setLimit(more);
+    },
+    loaded: loadedFor === workspaceId,
+    errorCode,
+    refresh,
+    adopt,
+  };
+}
+
+/**
+ * Open assignments for Home's agent line. Checks every 30 s while the tab is
+ * visible (work can arrive from another device), on return to the tab and
+ * when `version` changes. Errors keep the last good copy; nothing is invented.
+ */
+export function useOpenAssignments(workspaceId: string, version = 0) {
+  const [result, setResult] = useState<{ workspaceId: string; list: Assignment[] } | null>(null);
+  const [tick, setTick] = useState(0);
+  const hidden = useHidden();
+  const alive = useRef(true);
+  const seq = useRef(0);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  const refresh = useCallback(async () => {
+    if (!workspaceId) return;
+    const mine = ++seq.current;
+    try {
+      const list = await assignmentsU05.list(workspaceId, { states: OPEN_STATES, limit: 100 });
+      if (alive.current && mine === seq.current) setResult({ workspaceId, list });
+    } catch {
+      /* Keep what was shown; the next check retries. */
+    } finally {
+      if (alive.current) setTick((t) => t + 1);
+    }
+  }, [workspaceId]);
+  useEffect(() => {
+    void refresh();
+  }, [refresh, version]);
+  useOnVisible(() => void refresh());
+  const delay = homePollDelay({ hidden });
+  useEffect(() => {
+    if (delay === null) return;
+    const timer = setTimeout(() => void refresh(), delay);
+    return () => clearTimeout(timer);
+  }, [delay, tick, refresh]);
+  // Another space's copy never shows here.
+  return result?.workspaceId === workspaceId ? result.list : null;
 }

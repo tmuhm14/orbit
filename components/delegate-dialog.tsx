@@ -9,7 +9,8 @@ import type { Assignment } from "@/lib/assignments/types";
 import { MAX_CONTEXT_ITEMS, OUTCOME_MAX } from "@/lib/assignments/transitions";
 import { KIND_LABELS } from "@/lib/item-properties";
 import { contextOptions, itemTitle, outcomeStatus, toggleContext } from "@/lib/assignment-view";
-import { AssignmentErrorNotice, type ErrorNoticeActions } from "./assignment-status";
+import { availabilityCopy, type Availability } from "@/lib/agents-view";
+import { AgentAvailabilityNotice, AssignmentErrorNotice, type ErrorNoticeActions } from "./assignment-status";
 import { assignments, errorCodeOf } from "./use-assignment";
 import { useModalDialog } from "./use-modal-dialog";
 
@@ -180,9 +181,12 @@ export function DelegateDialog({
   onOpenAssignment,
   onOpenSettings,
   onOpenAgent,
+  availability = null,
 }: {
   note: Note;
   notes: Note[];
+  /** From useAvailability; explains up front when delegation can't go ahead. */
+  availability?: Availability | null;
   onClose: () => void;
   onCreated: (assignment: Assignment) => void;
   onOpenAssignment: (id: string) => void;
@@ -236,7 +240,7 @@ export function DelegateDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby={`${id}-title`}
-        aria-describedby={`${id}-intro`}
+        aria-describedby={`${id}-intro${availabilityCopy(availability) && !error ? ` ${id}-availability` : ""}`}
         onKeyDown={onKeyDown}
       >
         <header className="assignment-dialog-head">
@@ -255,6 +259,15 @@ export function DelegateDialog({
           </button>
         </header>
         <form className="assignment-dialog-body" onSubmit={submit} noValidate>
+          {/* Up front; the submit-time error below still covers a stale answer. */}
+          {!error && (
+            <AgentAvailabilityNotice
+              availability={availability}
+              id={`${id}-availability`}
+              onOpenSettings={onOpenSettings}
+              onOpenAgent={onOpenAgent}
+            />
+          )}
           <div className="assignment-field">
             <label htmlFor={`${id}-outcome`}>
               What should come back? <span className="assignment-required">Required</span>

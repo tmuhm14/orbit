@@ -3,6 +3,7 @@
 import Link from "next/link";
 import {
   ArrowUpRight,
+  Bot,
   CalendarClock,
   CheckCircle2,
   Download,
@@ -47,12 +48,13 @@ export function WorkspaceSidebar({
     search,
     settingsPage,
     scheduledPage,
+    agentsPage,
     navigate,
     exportNotes,
     openGuide,
   } = useWorkspaceShell();
   const dropProps = useBucketDropTargets();
-  const onRoute = !settingsPage && !scheduledPage;
+  const onRoute = !settingsPage && !scheduledPage && !agentsPage;
   return (
     <>
       {open && <div className="sidebar-backdrop" onClick={onClose} />}
@@ -119,6 +121,10 @@ export function WorkspaceSidebar({
             <span className="nav-count">{completed.length || ""}</span>
           </button>
           <div className="nav-divider" />
+          <Link className={`nav-item ${agentsPage ? "active" : ""}`} href="/agents" onClick={onClose} aria-current={agentsPage ? "page" : undefined}>
+            <Bot size={18} />
+            <span>Agents</span>
+          </Link>
           <Link className={`nav-item ${scheduledPage ? "active" : ""}`} href="/scheduled" onClick={onClose} aria-current={scheduledPage ? "page" : undefined}>
             <CalendarClock size={18} />
             <span>Scheduled jobs</span>

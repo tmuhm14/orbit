@@ -2,7 +2,7 @@
 
 import { CheckCircle2, List, Orbit, Search } from "lucide-react";
 import { BUCKETS } from "@/lib/notes";
-import { HomeBucketLinks, HomeDueItems, HomeHeader, HomeList } from "./home-view";
+import { HomeAgentLine, HomeBucketLinks, HomeDueItems, HomeHeader, HomeList } from "./home-view";
 import { NotesSection } from "./notes-section";
 import { QuickCapture } from "./quick-capture";
 import { bucketIcons, useWorkspaceShell } from "./workspace-shell-context";
@@ -75,6 +75,10 @@ export function WorkspaceMain({
           <HomeHeader />
           <div className="home-capture">
             <QuickCapture />
+          </div>
+          {/* After capture: shown only when there's real agent work. */}
+          <div className="home-agent-slot">
+            <HomeAgentLine />
           </div>
           <div className="home-inbox">
             <HomeList kind="inbox" />

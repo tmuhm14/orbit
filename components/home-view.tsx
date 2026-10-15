@@ -1,6 +1,7 @@
 "use client";
 
-import { AlertTriangle, ArrowRight, ArrowUpRight, Mail, MessageSquare, Orbit } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, ArrowRight, ArrowUpRight, Mail, MessageSquare, Orbit, Sparkles } from "lucide-react";
 import { BUCKETS, followupState, isDueDate, type BucketId, type Note } from "@/lib/notes";
 import { followupSummary } from "@/lib/item-properties";
 import {
@@ -10,7 +11,9 @@ import {
   waitingItems,
   type HomeList,
 } from "@/lib/home-items";
+import { homeAgentSummary } from "@/lib/agents-view";
 import { DueItems, dueDateLabel, useLocalToday } from "./due-items";
+import { useOpenAssignments } from "./use-assignment";
 import { ItemActionsMenu } from "./item-actions-menu";
 import { useBucketDropTargets, useDraggableItem } from "./item-drag";
 import { bucketIcons, useWorkspaceShell } from "./workspace-shell-context";
@@ -245,5 +248,39 @@ export function HomeDueItems() {
       rowProps={dragProps}
       renderActions={(note) => <ItemActionsMenu note={note} className="due-actions" />}
     />
+  );
+}
+
+/**
+ * Home's compact agent line: "1 needs your review · 2 in progress", from
+ * real assignments in this space. Hidden entirely when nothing is open (no
+ * placeholder, no empty card). Opens the one assignment that needs you, or
+ * the Agents page. Checks every 30 s while the tab is visible.
+ */
+export function HomeAgentLine() {
+  const { workspaceId, assignmentsVersion, openAssignment } = useWorkspaceShell();
+  const list = useOpenAssignments(workspaceId, assignmentsVersion);
+  const summary = list ? homeAgentSummary(list) : null;
+  if (!summary) return null;
+  return (
+    <section className={`home-agent ${summary.needsYou ? "needs-you" : ""}`} aria-labelledby="home-agent-heading">
+      <span className="home-agent-icon" aria-hidden="true">
+        <Sparkles size={15} />
+      </span>
+      <div className="home-agent-text">
+        <h2 id="home-agent-heading">Agent</h2>
+        <p>{summary.text}</p>
+      </div>
+      <div className="home-agent-actions">
+        {summary.assignmentId && (
+          <button type="button" className="text-button" aria-haspopup="dialog" onClick={() => openAssignment(summary.assignmentId!)}>
+            {list!.find((a) => a.id === summary.assignmentId)?.state === "needs_input" ? "Answer" : "Review"}
+          </button>
+        )}
+        <Link className="text-button home-agent-link" href="/agents">
+          {summary.assignmentId ? "All agent work" : "Open Agents"} <ArrowRight size={13} aria-hidden="true" />
+        </Link>
+      </div>
+    </section>
   );
 }
