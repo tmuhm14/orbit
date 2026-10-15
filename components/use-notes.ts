@@ -10,6 +10,7 @@ import {
   normalizeFollowup,
   browserNotes,
   createNote,
+  deleteWithUnlink,
   draftPlan,
   exportDocument,
   hasUnsavedChanges,
@@ -21,6 +22,7 @@ import {
   projectLinkError,
   projectsIn,
   restoreDrafts,
+  revertUnlink,
   settleIdenticalConflicts,
   withRestored,
   type ConflictInfo,
@@ -33,6 +35,7 @@ import {
   type NoteWrite,
   type SaveResponse,
   type SyncedEntry,
+  type UnlinkMove,
 } from "@/lib/notes";
 import {
   REMINDER_ERROR_CODES,
@@ -147,6 +150,8 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
   );
   // Project deletes the user confirmed: linked items move up to its parent.
   const unlinkOnDelete = useRef(new Set<string>());
+  // Items moved up locally for each of those deletes, undone if it is refused.
+  const unlinkMoves = useRef(new Map<string, UnlinkMove[]>());
   // Restored drafts not shown yet (id → their updatedAt); see draftPlan().
   const restoring = useRef(new Map<string, string>());
   // Notes with an unsaved-edits draft in browser storage.
@@ -314,9 +319,17 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
           { method: "DELETE", keepalive },
         );
         checkClient(minClient);
+        const moved = unlinkMoves.current.get(id);
+        // Refused: items moved up locally (deleteNote) go back under it.
+        const undoMove = () => {
+          unlinkMoves.current.delete(id);
+          if (!moved?.length) return;
+          setNotes((list) => revertUnlink(list, id, moved));
+        };
         if (status === 200 || status === 404) {
           synced.current.delete(id);
           unlinkOnDelete.current.delete(id);
+          unlinkMoves.current.delete(id);
           if (unlink) unlinked = true;
         } else if (
           status === 409 &&
@@ -333,6 +346,7 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
           setNotes((list) =>
             list.some((n) => n.id === id) ? list : [current, ...list],
           );
+          undoMove();
           setBlockedDeletes((list) => [
             ...list.filter((b) => b.id !== id),
             { id, count: Number(body.count) || 0 },
@@ -347,6 +361,9 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
           setNotes((list) =>
             list.some((n) => n.id === id) ? list : [current, ...list],
           );
+          // It is no longer being deleted; an unlink is asked for again.
+          unlinkOnDelete.current.delete(id);
+          undoMove();
           setDeleteConflictIds((ids) => (ids.includes(id) ? ids : [...ids, id]));
         } else failed = true;
       }
@@ -615,9 +632,17 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
    * direct items up to its parent project (or to no project).
    */
   function deleteNote(id: string, { unlinkChildren = false } = {}) {
-    if (unlinkChildren) unlinkOnDelete.current.add(id);
     setBlockedDeletes((list) => list.filter((b) => b.id !== id));
-    setNotes((list) => list.filter((n) => n.id !== id));
+    if (!unlinkChildren) {
+      setNotes((list) => list.filter((n) => n.id !== id));
+      return;
+    }
+    // Move its items up here too, so they never point at a project that is
+    // gone; the refresh after the delete picks up their new revisions.
+    unlinkOnDelete.current.add(id);
+    const { moved } = deleteWithUnlink(notesRef.current, id, synced.current);
+    unlinkMoves.current.set(id, moved);
+    setNotes((list) => deleteWithUnlink(list, id).notes);
   }
 
   /**

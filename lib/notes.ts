@@ -1018,6 +1018,60 @@ export function hasUnsavedChanges(
   return changed.length > 0 || deleted.length > 0;
 }
 
+/** An item deleteWithUnlink() moved: where to, and its copy at the time. */
+export type UnlinkMove = {
+  id: string;
+  to: string | null;
+  updatedAt: string;
+  /** It had no unsaved edits, so the move was never sent with it. */
+  clean: boolean;
+};
+
+/**
+ * A project deleted with unlinkChildren moves its direct items up to its
+ * parent project (or to none) on the server. This applies the same move
+ * locally right away, without marking the items as edited (the server makes
+ * the change; the follow-up refresh picks up their new revisions). Items
+ * with unsaved edits are saved with the new link. Returns the list without
+ * the project and the items that moved. Idempotent.
+ */
+export function deleteWithUnlink(
+  notes: Note[],
+  projectId: string,
+  synced: SyncedMap = new Map(),
+) {
+  const parent = notes.find((n) => n.id === projectId)?.projectId ?? null;
+  const moved: UnlinkMove[] = [];
+  const next = notes
+    .filter((n) => n.id !== projectId)
+    .map((n) => {
+      if (n.projectId !== projectId) return n;
+      moved.push({
+        id: n.id,
+        to: parent,
+        updatedAt: n.updatedAt,
+        clean: synced.get(n.id)?.updatedAt === n.updatedAt,
+      });
+      return { ...n, projectId: parent };
+    });
+  return { notes: next, moved };
+}
+
+/**
+ * Undoes deleteWithUnlink()'s local move after the delete was refused, for
+ * items that were clean when moved and are unchanged since (any other item
+ * was or will be saved with the new link, or was replaced by a server copy).
+ */
+export function revertUnlink(notes: Note[], projectId: string, moved: UnlinkMove[]): Note[] {
+  const byId = new Map(moved.filter((m) => m.clean).map((m) => [m.id, m]));
+  return notes.map((n) => {
+    const m = byId.get(n.id);
+    return m && n.updatedAt === m.updatedAt && (n.projectId ?? null) === m.to
+      ? { ...n, projectId }
+      : n;
+  });
+}
+
 /** Accent palette for workspaces. ink is the text color on a solid accent. */
 export const WORKSPACE_COLORS = {
   black: { accent: "#050506", ink: "#f4f1fa", line: "#4b4954" },
