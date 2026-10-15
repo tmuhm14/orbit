@@ -399,7 +399,8 @@
                     "artifact_submitted",
                     "review_decided",
                     "cancel_requested",
-                    "context_unavailable"
+                    "context_unavailable",
+                    "item_detached"
                   ]
                 },
                 "actor": {

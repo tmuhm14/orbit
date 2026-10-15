@@ -43,7 +43,8 @@ Rules:
 - The **requested outcome**, **question answers** and **request-changes comments** are written by the user and are the only instructions an executor may act on (`assignmentIntent()` in `lib/assignments/client.ts`).
 - The source item and the selected context items are captured content. They are stored with `contentRole: "untrusted_data"` and are data, never instructions. The same applies to executor-written text (questions, progress, artifacts): render it as untrusted.
 - Context is only what the user selected: up to **20** distinct items from the assignment's workspace, not including the source item. The revision of each item at selection time is kept. A deleted item stays in the list with `noteId: null`.
-- An item that is the source or context of any assignment can't move to another workspace (the item save returns `invalid_note` for it). Deleting it is allowed.
+- An item that is the source or context of an **active** assignment (queued, running, needs_input, needs_review) can't move to another workspace: `PUT /api/notes` answers 422 with the item's result `{ status: "invalid", code: "invalid_note" }` (direct database updates fail with `assignment_active`). Cancel or finish the assignment first.
+- Moving an item used only by **finished** assignments (completed, failed, canceled) succeeds. Those assignments detach from it: `sourceNoteId` or the context item's `noteId` becomes `null`, everything else (outcome, context position and revision, attempts, events, questions, artifacts, reviews) is kept, and an `item_detached` event (`payload: { noteId, role: "source" | "context" }`) is appended. Deleting an item is allowed either way and detaches it the same way, without the event.
 
 ## Routes
 
@@ -94,7 +95,7 @@ Artifact = { id, attemptId, kind: "draft" | "summary", title, content /* Tiptap 
 Review = { id, artifactId, decision, comment, decidedAt }
 ```
 
-Event types: `state_changed`, `progress` (`payload.text`, up to 280 characters of executor text), `question_asked`, `question_answered`, `artifact_submitted`, `review_decided`, `cancel_requested`, `context_unavailable`. Payloads hold ids, codes and progress text only.
+Event types: `state_changed`, `progress` (`payload.text`, up to 280 characters of executor text), `question_asked`, `question_answered`, `artifact_submitted`, `review_decided`, `cancel_requested`, `context_unavailable`, `item_detached`. Payloads hold ids, codes and progress text only.
 
 `errorCode` on a failed assignment is one of `provider_auth`, `provider_rate_limited`, `provider_unavailable`, `budget_exhausted`, `timed_out`, `context_unavailable`, `capability_revoked`, `executor_unavailable`, `internal`.
 

@@ -182,6 +182,7 @@ Rules that apply across transitions:
 - **Lease and heartbeat.** The interim built-in executor uses a 90 s lease and a 30 s heartbeat, under the route's `maxDuration = 300`. **Decided by Tony, 2026-10-14.**
 - **Any item kind may be delegated** (`note`, `task`, `project`, `document`, `followup`), not only tasks and follow-ups. **Decided by Tony, 2026-10-14.**
 - **At most one non-terminal assignment per source item** (partial unique index on `source_note_id where state in ('queued', 'running', 'needs_input', 'needs_review')`); parallel assignments on one item are not allowed. **Decided by Tony, 2026-10-14.**
+- **Workspace moves of referenced items.** Moving an item to another workspace is refused only while it is the source or a context item of a non-terminal assignment (`queued`, `running`, `needs_input`, `needs_review`); a `before update of workspace_id` trigger on `notes` raises `assignment_active`, which `save_notes` reports as its per-item `invalid_note` (a distinct code would need changes to `save_notes`/`note_link_error` and the notes routes). Finished assignments (`completed`, `failed`, `canceled`) don't block the move: the same trigger first detaches them, setting `source_note_id` or the context row's `note_id` to null and appending an `item_detached` event, while the assignment keeps its history, artifacts, stored outcome and context rows. The composite keys stay `on update restrict` as a backstop. **Decided by Tony, 2026-10-14.**
 - **Reject maps to `canceled`** (T13) with a recorded `reject` review, so "the user declined the result" is never confused with "the system failed". **Decided by Tony, 2026-10-14.**
 - **Per-workspace concurrency** for the built-in executor: one `running` attempt per workspace, mirroring the existing `409 "The agent is already working here"` check for organizing runs.
 
@@ -212,7 +213,7 @@ Routes return `{ error: string, code: string, ... }`. `error` is generic.
 
 Normalized failure codes stored in `error_code` and shown to the user: `provider_auth`, `provider_rate_limited`, `provider_unavailable`, `budget_exhausted`, `timed_out`, `context_unavailable`, `capability_revoked`, `executor_unavailable`, `internal`. Raw provider messages are never stored or shown; `ProviderError` from `lib/agent/providers.ts` maps to a code.
 
-Item-side effects: `DELETE /api/notes/:id` and workspace moves on a source task with a non-terminal assignment return `409 has_active_assignment` (the user cancels first). Deleting a context item is allowed; the executor records `context_unavailable` and continues with the rest, or fails if none remain.
+Item-side effects: a workspace move of an item used by a non-terminal assignment is refused (§2, decided by Tony, 2026-10-14), surfaced as `invalid_note` until the notes routes add a distinct code. `DELETE /api/notes/:id` on a source task with a non-terminal assignment returning `409 has_active_assignment` is not implemented yet (it needs a notes-route change); today the delete succeeds and the assignment detaches. Deleting a context item is allowed; the executor records `context_unavailable` and continues with the rest, or fails if none remain.
 
 ### 5. Functions and routes
 
