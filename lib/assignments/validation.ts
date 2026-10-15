@@ -114,12 +114,17 @@ export function parseReview(body: unknown): Parsed<{
   };
 }
 
-/** `?workspaceId=<uuid>[&state=queued,running][&limit=50]`. */
-export function parseListQuery(
-  query: URLSearchParams,
-): Parsed<{ workspaceId: string; states: AssignmentState[] | null; limit: number }> {
+/** `?workspaceId=<uuid>[&sourceNoteId=<uuid>][&state=queued,running][&limit=50]`. */
+export function parseListQuery(query: URLSearchParams): Parsed<{
+  workspaceId: string;
+  sourceNoteId: string | null;
+  states: AssignmentState[] | null;
+  limit: number;
+}> {
   const workspaceId = query.get("workspaceId");
   if (!isAssignmentUuid(workspaceId)) return fail;
+  const sourceNoteId = query.get("sourceNoteId");
+  if (sourceNoteId !== null && !isAssignmentUuid(sourceNoteId)) return fail;
   const stateParam = query.get("state");
   let states: AssignmentState[] | null = null;
   if (stateParam !== null) {
@@ -130,5 +135,39 @@ export function parseListQuery(
   const limitParam = query.get("limit");
   const limit = limitParam === null ? 50 : Number(limitParam);
   if (!/^\d+$/.test(limitParam ?? "50") || limit < 1 || limit > 100) return fail;
-  return { ok: true, value: { workspaceId, states, limit } };
+  return { ok: true, value: { workspaceId, sourceNoteId, states, limit } };
+}
+
+/** Longest title a saved document may get (the artifact title limit). */
+export const DOCUMENT_TITLE_MAX = 200;
+
+/**
+ * `{ expectedRevision, artifactId, projectId?, title? }` for save-document.
+ * projectId: absent (default project), null (none) or a uuid. title is
+ * trimmed, 1–200 characters. Unknown fields are rejected.
+ */
+export function parseSaveDocument(body: unknown): Parsed<{
+  expectedRevision: number;
+  artifactId: string;
+  projectId?: string | null;
+  title?: string;
+}> {
+  if (!isObject(body) || !onlyKeys(body, ["expectedRevision", "artifactId", "projectId", "title"]))
+    return fail;
+  const revision = expectedRevision(body.expectedRevision);
+  if (!revision || !isAssignmentUuid(body.artifactId)) return fail;
+  const value: { expectedRevision: number; artifactId: string; projectId?: string | null; title?: string } = {
+    expectedRevision: revision,
+    artifactId: body.artifactId,
+  };
+  if (Object.hasOwn(body, "projectId")) {
+    if (body.projectId !== null && !isAssignmentUuid(body.projectId)) return fail;
+    value.projectId = body.projectId;
+  }
+  if (Object.hasOwn(body, "title")) {
+    const title = text(body.title, DOCUMENT_TITLE_MAX);
+    if (!title) return fail;
+    value.title = title;
+  }
+  return { ok: true, value };
 }

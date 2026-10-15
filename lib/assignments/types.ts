@@ -1,3 +1,4 @@
+import type { Note } from "@/lib/notes";
 import type { AssignmentActor, AssignmentState, FailureCode } from "./transitions";
 
 // API shapes for /api/assignments (docs/api/assignments.md). Shared by the
@@ -55,7 +56,9 @@ export type AssignmentEventType =
   | "cancel_requested"
   | "context_unavailable"
   /** A finished assignment lost its link to an item that moved workspace. */
-  | "item_detached";
+  | "item_detached"
+  /** The accepted result was saved as a document item (payload { artifactId, noteId }). */
+  | "artifact_saved";
 
 export type AssignmentEvent = {
   id: string;
@@ -108,6 +111,12 @@ export type AssignmentReview = {
   decidedAt: string;
 };
 
+/**
+ * One row of `GET /api/assignments`: the assignment plus the document item
+ * saved from its accepted result (null when none was saved, or it was deleted).
+ */
+export type AssignmentListItem = Assignment & { savedNoteId: string | null };
+
 export type AssignmentDetail = {
   assignment: Assignment;
   context: AssignmentContextItem[];
@@ -136,9 +145,24 @@ export type AssignmentErrorCode =
   | "save_failed"
   | "not_configured";
 
+/**
+ * Codes only `POST /api/assignments/:id/save-document` returns (U-05). Kept
+ * apart from AssignmentErrorCode so exhaustive maps over the older codes keep
+ * compiling; AssignmentRouteErrorCode is every code.
+ */
+export type AssignmentDocumentErrorCode =
+  /** This result already has a saved document (body noteId). */
+  | "already_saved"
+  /** The project link was refused. */
+  | "invalid_project_link"
+  | "project_cycle"
+  | "project_depth_exceeded";
+
+export type AssignmentRouteErrorCode = AssignmentErrorCode | AssignmentDocumentErrorCode;
+
 export type AssignmentErrorBody = {
   error: string;
-  code: AssignmentErrorCode;
+  code: AssignmentRouteErrorCode;
   /** revision_conflict */
   currentRevision?: number;
   state?: AssignmentState;
@@ -148,6 +172,8 @@ export type AssignmentErrorBody = {
   allowed?: AssignmentState[];
   /** active_assignment_exists */
   assignmentId?: string;
+  /** already_saved: the document item saved earlier. */
+  noteId?: string;
 };
 
 export type CreateAssignmentInput = {
@@ -157,3 +183,35 @@ export type CreateAssignmentInput = {
   contextNoteIds?: string[];
   executor?: "builtin";
 };
+
+export type ListAssignmentsOptions = {
+  states?: AssignmentState[];
+  limit?: number;
+  /** Only assignments delegated from this item. */
+  sourceNoteId?: string;
+};
+
+/** Body of `POST /api/assignments/:id/save-document`. */
+export type SaveDocumentInput = {
+  /** The assignment's current revision. */
+  expectedRevision: number;
+  /** The accepted, current artifact. */
+  artifactId: string;
+  /**
+   * Absent: the source item if it is a project, else its project, else none.
+   * null: no project. A uuid: that project in the assignment's workspace.
+   */
+  projectId?: string | null;
+  /** 1–200 characters after trimming; default the artifact title. */
+  title?: string;
+};
+
+/** 201 from save-document. `note` has the same shape as `GET /api/notes` items. */
+export type SaveDocumentResult = { note: Note; assignment: Assignment };
+
+export type AssignmentUnavailableReason = "agent_disabled" | "no_key" | "key_unreadable";
+
+/** `GET /api/assignments/availability`: whether the built-in executor can run. */
+export type AssignmentAvailability =
+  | { available: true }
+  | { available: false; reason: AssignmentUnavailableReason };

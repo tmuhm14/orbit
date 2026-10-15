@@ -275,6 +275,18 @@ These record how the built-in preparation executor implements this decision; the
 - **Recovery** (ADR 005 tier 2): besides `after()` in the queuing routes, `POST /api/assignments/kickoff` (client ping) and every scheduler tick restart queued built-in work whose kickoff was lost. `claim_assignment`'s queued-only guard and per-workspace limit make duplicate starts no-ops.
 - **Artifacts** (§6): content is a Tiptap document converted from the model's markdown (safe subset, no links or HTML) and `plain_text` holds the markdown. Saving as a document item stays with U-05.
 
+## Implementation notes (U-05 backend, 2026-10-15)
+
+These record how saving a result (§6) is implemented; they don't change the decision. Details are in `docs/api/assignments.md`.
+
+- **Route** (§5): `POST /api/assignments/:id/save-document` `{ expectedRevision, artifactId, projectId?, title? }` instead of `/:id/artifacts/:artifactId/save`, so it takes the same revision precondition as the other mutations. → `201 { note, assignment }`.
+- **One function, not `save_notes`** (§6): migration `20261019000000_assignment_saved_documents.sql` adds `save_assignment_artifact_as_note()` (security definer, `authenticated`). It inserts the note directly, with the same triggers as any insert (workspace fill, revision 1, project link validation), sets `saved_note_id` and appends the event in one transaction, which a `save_notes` call plus a second function could not. It is still a user write: no `agent_actions` row. The migration changes no existing function; it extends the event type check with `artifact_saved` (actor `user`, `payload: { artifactId, noteId }`) and adds an index on `saved_note_id`.
+- **Link column**: the A-01 `saved_note_id` foreign key to `notes (id) on delete set null` is reused. It is not composite: the function only links a note it created in the assignment's workspace for the same user, and a composite key with `on update restrict` would stop the document from moving workspace later. Deleting the document clears the link; the assignment is otherwise unchanged and the result can be saved again.
+- **Provenance**: `source` stays `'web'` (the column's allowed set and the browser's note validation are unchanged) and `origin` is `{ kind: "assignment", assignmentId, artifactId }`.
+- **Project default**: absent `projectId` → the source item if it is a project, else its `project_id`, else none; `null` → none. A document is never a project, so `project_cycle` and `project_depth_exceeded` can't occur; they are mapped anyway.
+- **Revision and idempotency**: saving doesn't update the assignment row, so `revision` and `state` don't change. A second save of the same artifact answers `already_saved` with the existing `noteId`; the assignment row lock serializes concurrent saves.
+- **Availability**: `GET /api/assignments/availability` reports `agent_disabled`, `no_key` or `key_unreadable` from the same checks as the executor preflight, with no key material.
+
 ## Consequences
 
 - One clear lifecycle drives U-04/U-05 and survives refresh (state is in Postgres).

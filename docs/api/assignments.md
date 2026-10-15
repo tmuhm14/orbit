@@ -2,7 +2,7 @@
 
 Delegate one item to an executor with a requested outcome and selected context, follow its progress, answer its questions and review its result (ADR 003). These routes are for the signed-in Orbit web app: they use the browser's Supabase cookie session, not a bearer token, and every `POST` must be same-origin (an `Origin` header matching the host). External-agent access to assignments arrives with A-05/A-06.
 
-Apply `supabase/migrations/20261017000000_assignments.sql` before deploying these routes. It is purely additive. Executor operations (claim, heartbeat, ask, submit, fail) are database functions used by the server's built-in executor (A-02, [below](#built-in-executor)); they have no HTTP route. A-02 needs no further migration.
+Apply `supabase/migrations/20261017000000_assignments.sql` before deploying these routes. It is purely additive. Executor operations (claim, heartbeat, ask, submit, fail) are database functions used by the server's built-in executor (A-02, [below](#built-in-executor)); they have no HTTP route. A-02 needs no further migration. Saving a result as a document (U-05) needs `supabase/migrations/20261019000000_assignment_saved_documents.sql`, also purely additive: one new function, one index, and `artifact_saved` added to the allowed event types.
 
 The OpenAPI description is under `/api/assignments` in `openapi.json` (security `cookieSession`).
 
@@ -59,9 +59,13 @@ All responses are `Cache-Control: private, no-store`. Ids are UUIDs.
 
 `requestedOutcome` is trimmed, 1–4000 characters. `contextNoteIds` is optional (default `[]`). `executor` is optional and must be `"builtin"`. Unknown fields are rejected. The workspace must have the agent switch on and the account a saved model key. → `201 { assignment }` in `queued`.
 
-### `GET /api/assignments?workspaceId=<uuid>[&state=queued,running][&limit=50]`
+### `GET /api/assignments?workspaceId=<uuid>[&sourceNoteId=<uuid>][&state=queued,running][&limit=50]`
 
-→ `{ assignments: Assignment[] }`, newest first, no artifact content. `state` is a comma-separated list of states; `limit` is 1–100.
+→ `{ assignments: (Assignment & { savedNoteId: string | null })[] }`, newest first, no artifact content. `sourceNoteId` keeps only assignments delegated from that item (not a UUID: `400 invalid_payload`). `state` is a comma-separated list of states; `limit` is 1–100. `savedNoteId` is the document item saved from the assignment's accepted result, or `null`.
+
+### `GET /api/assignments/availability?workspaceId=<uuid>`
+
+→ `{ available: true }` or `{ available: false, reason: "agent_disabled" | "no_key" | "key_unreadable" }`. Whether the built-in executor can run in the workspace right now, checked on the server in this order: the workspace agent switch is on (`agent_disabled`), the account has a saved model key (`no_key`), and the key decrypts (`key_unreadable`; re-enter it in Settings). Use it to enable or explain the Delegate action; `POST /api/assignments` still checks for itself. Nothing about the key (ciphertext, hint, provider, model) is returned. The workspace must be the caller's (`404 not_found` otherwise); `503 not_configured` if the server can't read agent settings.
 
 ### `GET /api/assignments/:id`
 
@@ -84,6 +88,20 @@ All responses are `Cache-Control: private, no-store`. Ids are UUIDs.
 `{ "workspaceId": "<uuid>" }` → `202 { scheduled: 0 | 1 }`. A recovery ping for the built-in executor: call it when a built-in assignment has been `queued` for more than a few seconds (for example after a refresh, or while polling the detail). It reaps the caller's expired leases, then starts the caller's oldest queued built-in assignment in that workspace in the background. Safe to repeat and to call while a run is in progress: at most one run claims the assignment and the others do nothing. `scheduled` says whether a start was attempted, not that it claimed; read the assignment for its state. Unknown fields are rejected (`400 invalid_payload`); same session and same-origin rules as the other mutations.
 
 `POST /api/assignments`, `/:id/retry`, `/:id/answer` and `/:id/review` (`request_changes`) already start the run themselves when the result is `queued` with `executorKind: "builtin"`; `kickoff` is only for a start that was lost.
+
+### `POST /api/assignments/:id/save-document`
+
+`{ "expectedRevision": 6, "artifactId": "<uuid>", "projectId": "<uuid>" | null, "title": "Vendor reply" }` → `201 { note, assignment }`. Saves the accepted result as linked documentation (ADR 003 §6). `projectId` and `title` are optional; unknown fields are rejected; same session, same-origin and 32 KiB rules as the other mutations.
+
+- Allowed only when the assignment is `completed` and `artifactId` is its accepted, current (`supersededAt: null`) artifact.
+- In one transaction (`save_assignment_artifact_as_note`): creates an item with `kind: "document"`, `bucket: "reference"`, the assignment's workspace, `title` (trimmed, 1–200 characters) or else the artifact's title, the artifact's `content` and `plainText`, `source: "web"`, `origin: { kind: "assignment", assignmentId, artifactId }` and `revision: 1`; sets the artifact's `savedNoteId`; appends an `artifact_saved` event (actor `user`, `payload: { artifactId, noteId }`).
+- **Project:** `projectId` given → that project (it must be a project in the assignment's workspace). `projectId: null` → no project. Absent → the source item itself if it is a project, else the source item's project, else none (also none if the source item was deleted).
+- `note` has the same shape as the items of `GET /api/notes`. The browser's notes list picks it up on its next refresh; this route doesn't push it to open tabs.
+- It is a user write, not an agent action (no agent undo entry), and it never completes the source item.
+- The assignment row doesn't change: same `state` and `revision` (`assignment` is returned as is), so a retry with the same `expectedRevision` is safe.
+- **Idempotent:** if the artifact already has a document, `409 already_saved` with `noteId` and nothing is created. If that document is deleted, `savedNoteId` becomes `null` (the assignment is otherwise untouched) and the result can be saved again. Moving the document to another workspace keeps the link.
+
+Errors: `404 not_found` (assignment or artifact missing or not yours), `409 revision_conflict` (`currentRevision`, `state`), `409 invalid_transition` (not completed; `from` is the current state, `to: "completed"`, `allowed` the user's moves from `from`), `409 artifact_superseded` (not the accepted, current artifact), `409 already_saved` (`noteId`), `422 invalid_project_link` (not a project, another workspace or account, or missing), `422 project_cycle` / `project_depth_exceeded` (mapped for completeness: a document can't form a cycle and may attach at any depth, so these don't occur today), `400 invalid_payload`, and 401/403/413/500/503 as below.
 
 ## Built-in executor
 
@@ -151,14 +169,9 @@ An artifact (`GET /api/assignments/:id` → `artifacts[0]`, newest first; only t
 | `content` | A Tiptap document (`{ type: "doc", content: [...] }`) using only `paragraph`, `heading` (levels 1–3), `bulletList`, `orderedList`, `listItem`, `taskList`, `taskItem`, `blockquote`, `codeBlock`, `horizontalRule` and `text` with `bold`, `italic` and `code` marks. No links, images or HTML. The note editor opens it as is. |
 | `plainText` | The markdown the model wrote (up to 60 000 characters); use it as the note's `plain_text` |
 | `sourceNoteIds` | Ids the result relies on, always a subset of the assignment's source and selected context |
-| `savedNoteId` | `null` until saved (U-05) |
+| `savedNoteId` | `null` until saved with [`POST /:id/save-document`](#post-apiassignmentsidsave-document); `null` again if that item is deleted |
 
-To turn an **accepted** artifact into linked documentation (ADR 003 §6; U-05 implements this, A-02 does not):
-
-1. The assignment is `completed` (accepted) and the artifact is the reviewed one.
-2. Read the source item's `project_id` (`sourceNoteId` may be `null` if it was deleted; then use a project the user chooses in the same workspace, or none).
-3. Create the item with a normal user write, `PUT /api/notes` / `save_notes` with `expectedRevision: null`: `kind: "document"`, `bucket: "reference"`, `workspace_id` = the assignment's workspace, `project_id` from step 2, `title` = artifact `title`, `content` = artifact `content`, `plain_text` = artifact `plainText`. It is a user write, not an agent action, so there is no `agent_actions` row.
-4. Record the link in `assignment_artifacts.saved_note_id` plus an event. No function does this yet: `POST /api/assignments/:id/artifacts/:artifactId/save` (ADR 003 §5) belongs to U-05 and needs a small additive function, since authenticated users can't update the table directly.
+To turn an **accepted** artifact into linked documentation (ADR 003 §6), call `POST /api/assignments/:id/save-document` (above). It creates the document item and records the link in one transaction; the client doesn't write the note itself.
 
 Accepting never completes the source task; "Mark task done" stays a separate item edit.
 
@@ -174,11 +187,15 @@ Attempt = { id, attemptNumber, status: "running" | "succeeded" | "waiting" | "fa
 Event = { id: string, attemptId, type, actor: "user" | "executor" | "system", fromState, toState, payload, createdAt }
 Question = { id, attemptId, prompt, answer, askedAt, answeredAt, closedAt }
 Artifact = { id, attemptId, kind: "draft" | "summary", title, content /* Tiptap doc */, plainText, sourceNoteIds,
-  savedNoteId, supersededAt, createdAt }
+  savedNoteId: string | null, supersededAt, createdAt }
 Review = { id, artifactId, decision, comment, decidedAt }
+AssignmentListItem = Assignment & { savedNoteId: string | null }
+Availability = { available: true } | { available: false, reason: "agent_disabled" | "no_key" | "key_unreadable" }
 ```
 
-Event types: `state_changed`, `progress` (`payload.text`, up to 280 characters of executor text), `question_asked`, `question_answered`, `artifact_submitted`, `review_decided`, `cancel_requested`, `context_unavailable`, `item_detached`. Payloads hold ids, codes and progress text only.
+The browser client (`lib/assignments/client.ts`) has `list(workspaceId, { states?, limit?, sourceNoteId? })`, `availability(workspaceId)` and `saveDocument(id, { expectedRevision, artifactId, projectId?, title? })` alongside the other calls; types are in `lib/assignments/types.ts`.
+
+Event types: `state_changed`, `progress` (`payload.text`, up to 280 characters of executor text), `question_asked`, `question_answered`, `artifact_submitted`, `review_decided`, `cancel_requested`, `context_unavailable`, `item_detached`, `artifact_saved` (`payload: { artifactId, noteId }`, actor `user`). Payloads hold ids, codes and progress text only.
 
 `errorCode` on a failed assignment is one of `provider_auth`, `provider_rate_limited`, `provider_unavailable`, `budget_exhausted`, `timed_out`, `context_unavailable`, `capability_revoked`, `executor_unavailable`, `internal`.
 
@@ -197,10 +214,12 @@ Every error body is `{ error, code }`. `error` is a fixed message that never con
 | 409 | `revision_conflict` | `expectedRevision` is stale | `currentRevision`, `state` |
 | 409 | `invalid_transition` | Not allowed from the current state | `from`, `to`, `allowed` (targets the table allows for the user from `from`) |
 | 409 | `active_assignment_exists` | The item already has an active assignment (create, retry) | `assignmentId` |
-| 409 | `artifact_superseded` | Reviewing a result that a newer one replaced | |
+| 409 | `artifact_superseded` | Reviewing or saving a result that isn't the current (accepted) one | |
+| 409 | `already_saved` | Saving a result that already has a document item | `noteId` |
 | 413 | `payload_too_large` | Body over 32 KiB | |
 | 422 | `invalid_context` | A context id isn't one of your items in the workspace, or is the source item | |
+| 422 | `invalid_project_link` / `project_cycle` / `project_depth_exceeded` | save-document: the project link was refused | |
 | 500 | `load_failed` / `save_failed` | Storage error | |
 | 503 | `not_configured` | Server auth not configured | |
 
-`unauthenticated`, `forbidden_origin`, `not_configured`, `payload_too_large`, `load_failed` and `save_failed` are additions to ADR 003 §4: the first three replace the code-less bodies of the shared session check so every error has a code, and the others follow the existing note routes. `executor_busy` and `lease_lost` are executor-side results with no route (A-02 handles them inside the built-in executor: busy leaves the assignment queued, lease lost stops the run).
+`already_saved` and the three project-link codes (the same codes `PUT /api/notes` uses) are U-05 additions; in `lib/assignments/types.ts` they are `AssignmentDocumentErrorCode`, so `AssignmentErrorCode` keeps its earlier members and `AssignmentRouteErrorCode` is every code. `unauthenticated`, `forbidden_origin`, `not_configured`, `payload_too_large`, `load_failed` and `save_failed` are additions to ADR 003 §4: the first three replace the code-less bodies of the shared session check so every error has a code, and the others follow the existing note routes. `executor_busy` and `lease_lost` are executor-side results with no route (A-02 handles them inside the built-in executor: busy leaves the assignment queued, lease lost stops the run).

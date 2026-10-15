@@ -5,7 +5,7 @@ import type {
   AssignmentArtifact,
   AssignmentAttempt,
   AssignmentContextItem,
-  AssignmentErrorCode,
+  AssignmentRouteErrorCode,
   AssignmentEvent,
   AssignmentQuestion,
   AssignmentReview,
@@ -122,7 +122,7 @@ export const fromReviewRow = (row: Row): AssignmentReview => ({
   decidedAt: iso(row.decided_at),
 });
 
-const MESSAGES: Record<AssignmentErrorCode, [number, string]> = {
+const MESSAGES: Record<AssignmentRouteErrorCode, [number, string]> = {
   invalid_payload: [400, "Invalid request"],
   unauthenticated: [401, "Signed out"],
   forbidden_origin: [403, "Forbidden"],
@@ -138,10 +138,14 @@ const MESSAGES: Record<AssignmentErrorCode, [number, string]> = {
   load_failed: [500, "Could not load assignments"],
   save_failed: [500, "Could not save the assignment"],
   not_configured: [503, "Not configured"],
+  already_saved: [409, "This result is already saved as a document"],
+  invalid_project_link: [422, "That item can't be linked to this project."],
+  project_cycle: [422, "A project can't be placed inside one of its own sub-projects."],
+  project_depth_exceeded: [422, "Projects can be nested at most 5 levels deep."],
 };
 
 /** A `{ error, code }` response with the fixed message for `code`. */
-export function assignmentError(code: AssignmentErrorCode, extra: Record<string, unknown> = {}) {
+export function assignmentError(code: AssignmentRouteErrorCode, extra: Record<string, unknown> = {}) {
   const [status, error] = MESSAGES[code];
   return json({ error, code, ...extra }, status);
 }
@@ -189,7 +193,7 @@ type RawResult = {
   assignmentId?: string;
 };
 
-const PASSTHROUGH: Record<string, AssignmentErrorCode> = {
+const PASSTHROUGH: Record<string, AssignmentRouteErrorCode> = {
   not_found: "not_found",
   invalid_payload: "invalid_payload",
   invalid_context: "invalid_context",
