@@ -26,13 +26,22 @@ export type AgentMessage =
   | { role: "user"; text: string }
   | { role: "assistant"; text: string; calls: ToolCall[] }
   | { role: "tool"; results: { id: string; content: string }[] };
-export type ModelTurn = { text: string; calls: ToolCall[] };
+export type ModelTurn = {
+  text: string;
+  calls: ToolCall[];
+  /** Output tokens the provider reported for this turn, when it reports them. */
+  usage?: { outputTokens: number };
+};
 
 export type ModelProvider = {
   chat(request: {
     system: string;
     messages: AgentMessage[];
     tools: ToolDefinition[];
+    /** Most output tokens for this turn (Anthropic defaults to 4096). */
+    maxTokens?: number;
+    /** Aborts the call early (it also times out after 60 s). */
+    signal?: AbortSignal;
   }): Promise<ModelTurn>;
   /** Also serves as the key check: it fails on a bad key. */
   listModels(): Promise<string[]>;
@@ -56,13 +65,15 @@ async function call(
   provider: ProviderId,
   url: string,
   init: RequestInit,
+  signal?: AbortSignal,
 ) {
   let response: Response;
+  const timeout = AbortSignal.timeout(TIMEOUT_MS);
   try {
     response = await fetcher(url, {
       ...init,
       cache: "no-store",
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
     });
   } catch {
     throw new ProviderError(`Couldn't reach ${PROVIDERS[provider].name}`, 0);
@@ -81,6 +92,12 @@ async function call(
     `${name} error ${response.status}${detail ? `: ${detail}` : ""}`,
     response.status,
   );
+}
+
+/** A non-negative token count, or undefined when the provider sent none. */
+function outputTokens(value: unknown) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? { outputTokens: n } : undefined;
 }
 
 function parseArguments(raw: unknown): Record<string, unknown> {
@@ -104,7 +121,7 @@ export function anthropicProvider(
     "content-type": "application/json",
   };
   return {
-    async chat({ system, messages, tools }) {
+    async chat({ system, messages, tools, maxTokens, signal }) {
       const body = await call(
         fetcher,
         "anthropic",
@@ -114,7 +131,7 @@ export function anthropicProvider(
           headers,
           body: JSON.stringify({
             model,
-            max_tokens: 4096,
+            max_tokens: maxTokens ?? 4096,
             system,
             tools: tools.map((t) => ({
               name: t.name,
@@ -148,6 +165,7 @@ export function anthropicProvider(
             ),
           }),
         },
+        signal,
       );
       const blocks: {
         type: string;
@@ -169,6 +187,9 @@ export function anthropicProvider(
             name: String(b.name),
             input: parseArguments(b.input),
           })),
+        ...(body?.usage?.output_tokens !== undefined && {
+          usage: outputTokens(body.usage.output_tokens),
+        }),
       };
     },
     async listModels() {
@@ -200,12 +221,17 @@ export function openAiCompatibleProvider(
     "content-type": "application/json",
   };
   return {
-    async chat({ system, messages, tools }) {
+    async chat({ system, messages, tools, maxTokens, signal }) {
       const body = await call(fetcher, provider, `${base}/chat/completions`, {
         method: "POST",
         headers,
         body: JSON.stringify({
           model,
+          // OpenAI's reasoning models take max_completion_tokens; xAI takes max_tokens.
+          ...(maxTokens !== undefined &&
+            (provider === "openai"
+              ? { max_completion_tokens: maxTokens }
+              : { max_tokens: maxTokens })),
           tools: tools.map((t) => ({
             type: "function",
             function: {
@@ -244,7 +270,7 @@ export function openAiCompatibleProvider(
             ),
           ],
         }),
-      });
+      }, signal);
       const message = body?.choices?.[0]?.message ?? {};
       return {
         text: String(message.content ?? "").trim(),
@@ -258,6 +284,9 @@ export function openAiCompatibleProvider(
             input: parseArguments(c.function?.arguments),
           }),
         ),
+        ...(body?.usage?.completion_tokens !== undefined && {
+          usage: outputTokens(body.usage.completion_tokens),
+        }),
       };
     },
     async listModels() {
