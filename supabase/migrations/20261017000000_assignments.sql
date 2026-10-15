@@ -618,7 +618,8 @@ begin
 end $$;
 
 -- User transitions that need no other input: cancel (T2, T8, T10) and retry
--- of a failed assignment (T14). p_payload is reserved and must be null or an
+-- of a failed assignment (T14). A result waiting for review is declined
+-- through review_assignment_artifact (reject, T13), never a bare cancel. p_payload is reserved and must be null or an
 -- object. Cancel is immediate: a running attempt is canceled and its lease
 -- revoked in this transaction, so the executor's next call gets lease_lost.
 -- Results: saved { assignment }, not_found, invalid_payload, conflict,
@@ -649,8 +650,10 @@ begin
     return jsonb_build_object('status', 'conflict', 'currentRevision', v_row.revision,
       'state', v_row.state);
   end if;
-  -- queued from needs_input / needs_review is an answer or a review.
+  -- queued from needs_input / needs_review is an answer or a review, and
+  -- canceled from needs_review is a reject review (T13), so it is recorded.
   if (p_to_state = 'queued' and v_row.state <> 'failed')
+     or (p_to_state = 'canceled' and v_row.state = 'needs_review')
      or not (p_to_state = any (public.assignment_allowed(v_row.state, 'user'))) then
     return public.assignment_invalid_transition(v_row.state, p_to_state, 'user');
   end if;

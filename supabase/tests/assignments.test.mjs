@@ -391,6 +391,11 @@ test("forbidden transitions are refused with the allowed targets", { skip }, asy
   assert.deepEqual(await retry(A, input.id), { status: "invalid_transition", from: "needs_input", to: "queued",
     allowed: ["canceled", "queued"] }, "queued from needs_input is an answer");
 
+  const { a: inReviewA } = await inReview();
+  assert.deepEqual(await cancel(A, inReviewA.id), { status: "invalid_transition", from: "needs_review", to: "canceled",
+    allowed: ["canceled", "completed", "queued"] }, "declining a result is a reject review, not a bare cancel");
+  assert.equal((await row(inReviewA.id)).state, "needs_review");
+
   const { a: failed, lease } = await claimed();
   await fail(lease);
   assert.equal((await cancel(A, failed.id)).status, "invalid_transition");
