@@ -103,6 +103,14 @@ function AuthFields({
     mode === "reset" ? updatePassword : authenticate,
     { message: initialMessage, error: initialError },
   );
+  const signedIn = !!state.signedIn;
+  // A full page load, so the workspace renders on a request the browser sends
+  // with its new session cookies, and nothing from the signed-out page stays
+  // in memory. Replace keeps the sign-in page out of the back history.
+  useEffect(() => {
+    if (signedIn) window.location.replace("/");
+  }, [signedIn]);
+  const busy = pending || signedIn;
   const labels = {
     login: {
       title: "Welcome back",
@@ -153,7 +161,7 @@ function AuthFields({
                 placeholder="you@example.com"
                 required
                 maxLength={254}
-                disabled={pending || !configured}
+                disabled={busy || !configured}
               />
             </div>
           </label>
@@ -176,7 +184,7 @@ function AuthFields({
                 required
                 minLength={mode === "login" ? 1 : 12}
                 maxLength={128}
-                disabled={pending || !configured}
+                disabled={busy || !configured}
               />
               <button
                 type="button"
@@ -203,7 +211,7 @@ function AuthFields({
                 required
                 minLength={12}
                 maxLength={128}
-                disabled={pending || !configured}
+                disabled={busy || !configured}
               />
             </div>
           </label>
@@ -213,7 +221,7 @@ function AuthFields({
             className="auth-forgot"
             type="button"
             onClick={() => setMode("forgot")}
-            disabled={pending}
+            disabled={busy}
           >
             Forgot your password?
           </button>
@@ -231,9 +239,9 @@ function AuthFields({
         <button
           className="auth-submit"
           type="submit"
-          disabled={pending || !configured}
+          disabled={busy || !configured}
         >
-          {pending ? (
+          {busy ? (
             <>
               <LoaderCircle className="auth-spinner" size={17} />
               One moment…
@@ -255,19 +263,19 @@ function AuthFields({
         ) : mode === "login" ? (
           <>
             New here?{" "}
-            <button onClick={() => setMode("signup")} disabled={pending}>
+            <button onClick={() => setMode("signup")} disabled={busy}>
               Create an account
             </button>
           </>
         ) : mode === "signup" ? (
           <>
             Already have an account?{" "}
-            <button onClick={() => setMode("login")} disabled={pending}>
+            <button onClick={() => setMode("login")} disabled={busy}>
               Sign in
             </button>
           </>
         ) : (
-          <button onClick={() => setMode("login")} disabled={pending}>
+          <button onClick={() => setMode("login")} disabled={busy}>
             Back to sign in
           </button>
         )}

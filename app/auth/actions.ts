@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { authConfig, siteUrl } from "@/lib/supabase/config";
 
-export type AuthState = { error?: string; message?: string };
+export type AuthState = { error?: string; message?: string; signedIn?: true };
 
 export async function authenticate(
   _state: AuthState,
@@ -93,7 +93,11 @@ export async function authenticate(
       error: "We couldn't reach the sign-in service. Please try again.",
     };
   }
-  if (signedIn) redirect("/");
+  // Not redirect("/"): a redirect from a Server Action renders "/" inside this
+  // POST, from headers Next.js rebuilds by merging this response's cookies into
+  // the request's, instead of on a request from the browser. The form opens
+  // the workspace with a full page load, so it renders exactly like a reload.
+  if (signedIn) return { signedIn: true };
   return {};
 }
 

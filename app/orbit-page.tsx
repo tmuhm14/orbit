@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { authConfig } from "@/lib/supabase/config";
 import { NOTE_COLUMNS, fromRow, type NoteRow } from "@/lib/notes-db";
 import { loadWorkspaces } from "@/lib/workspaces-db";
+import { recordInitialLoadFailure } from "@/lib/initial-load";
 import { agentEncryptionKey } from "@/lib/agent/server";
 import { BUCKETS, type BucketId } from "@/lib/notes";
 
@@ -12,12 +13,15 @@ export async function orbitPage(initialView = "overview", initialSearchOpen = fa
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
-  const spaces = await loadWorkspaces(supabase);
+  const spaces = await loadWorkspaces(supabase, (failure) =>
+    recordInitialLoadFailure("workspaces", failure),
+  );
   const { data, error } = await supabase
     .from("notes")
     .select(NOTE_COLUMNS)
     .order("updated_at", { ascending: false })
     .returns<NoteRow[]>();
+  if (error) recordInitialLoadFailure("notes", error);
   const view = initialView === "all" || initialView === "completed" ||
     BUCKETS.some((bucket) => bucket.id === initialView)
     ? initialView as "all" | "completed" | BucketId : "overview";
