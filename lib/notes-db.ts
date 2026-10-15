@@ -2,7 +2,9 @@ import "server-only";
 import {
   BUCKETS,
   LINK_ERROR_CODES,
+  followupError,
   isItemKind,
+  normalizeFollowupText,
   isNote,
   type ItemKind,
   type Note,
@@ -12,7 +14,7 @@ import {
 } from "./notes";
 
 export const NOTE_COLUMNS =
-  "id,workspace_id,title,content,plain_text,bucket,tags,source,origin,created_at,updated_at,completed_at,due_date,revision,kind,project_id";
+  "id,workspace_id,title,content,plain_text,bucket,tags,source,origin,created_at,updated_at,completed_at,due_date,revision,kind,project_id,waiting_on,waiting_for,next_check_on";
 
 export type NoteRow = {
   id: string;
@@ -33,6 +35,10 @@ export type NoteRow = {
   /** Absent only in rows selected before kinds existed (read as "note"). */
   kind?: ItemKind;
   project_id?: string | null;
+  /** Absent only in rows selected before follow-ups existed (read as null). */
+  waiting_on?: string | null;
+  waiting_for?: string | null;
+  next_check_on?: string | null;
 };
 
 // Postgres returns microsecond offsets ("+00:00"); the client compares the
@@ -57,6 +63,9 @@ export function fromRow(row: NoteRow): Note {
     ...(row.revision != null ? { revision: Number(row.revision) } : {}),
     kind: row.kind ?? "note",
     projectId: row.project_id ?? null,
+    waitingOn: row.waiting_on ?? null,
+    waitingFor: row.waiting_for ?? null,
+    nextCheckOn: row.next_check_on ?? null,
   };
 }
 
@@ -78,6 +87,16 @@ export function toRow(note: Note, userId: string) {
     ...(note.dueDate !== undefined ? { due_date: note.dueDate } : {}),
     ...(note.kind !== undefined ? { kind: note.kind } : {}),
     ...(note.projectId !== undefined ? { project_id: note.projectId } : {}),
+    // Follow-up text is trimmed; empty means cleared.
+    ...(note.waitingOn !== undefined
+      ? { waiting_on: normalizeFollowupText(note.waitingOn) ?? null }
+      : {}),
+    ...(note.waitingFor !== undefined
+      ? { waiting_for: normalizeFollowupText(note.waitingFor) ?? null }
+      : {}),
+    ...(note.nextCheckOn !== undefined
+      ? { next_check_on: note.nextCheckOn || null }
+      : {}),
   };
 }
 
@@ -104,6 +123,8 @@ export function isSavableNote(value: unknown): value is Note {
     (value.projectId === undefined ||
       value.projectId === null ||
       UUID.test(value.projectId)) &&
+    // Lengths after trimming, no control characters, a calendar date.
+    followupError(value) === null &&
     JSON.stringify(value.content).length + value.plainText.length <= MAX_CONTENT
   );
 }

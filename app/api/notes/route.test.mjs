@@ -232,6 +232,6 @@ test("GET returns kind and projectId; legacy rows read as notes", async () => {
   const route = loadTs(new URL("./route.ts", import.meta.url),
     { ...imports, "@/lib/supabase/route-auth": { routeUser: async () => listAuth, json } });
   const { notes } = await (await route.GET(new Request("http://localhost/api/notes"))).json();
-  assert.match(selects[0], /,kind,project_id$/);
+  assert.match(selects[0], /,kind,project_id,waiting_on,waiting_for,next_check_on$/);
   assert.deepEqual(notes.map((n) => [n.kind, n.projectId]), [["note", null], ["task", "33333333-3333-4333-8333-333333333333"]]);
 });
