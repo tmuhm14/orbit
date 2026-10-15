@@ -3,7 +3,11 @@
 // read-only result preview. Nothing here logs or sends outcomes, results or
 // item content.
 import type { AssignmentState } from "./assignments/transitions.ts";
-import type { Assignment } from "./assignments/types.ts";
+import type {
+  Assignment,
+  AssignmentUnavailableReason,
+  SaveDocumentInput,
+} from "./assignments/types.ts";
 import { itemKind, type Note } from "./notes.ts";
 import { sinceLabel } from "./assignment-view.ts";
 
@@ -43,7 +47,7 @@ const byTime = (pick: (a: Assignment) => string | null | undefined, newestFirst:
  * "Needs you", most urgent first: questions before reviews (a question blocks
  * the agent; a review only waits for you), then whatever has waited longest.
  */
-export function needsYou(list: Assignment[]) {
+export function needsYou<T extends Assignment>(list: T[]): T[] {
   const oldest = byTime((a) => a.stateChangedAt, false);
   return list
     .filter((a) => NEEDS_YOU_STATES.includes(a.state))
@@ -51,7 +55,7 @@ export function needsYou(list: Assignment[]) {
 }
 
 /** "In progress": working first, then the queue in the order it will run (oldest first). */
-export function inProgress(list: Assignment[]) {
+export function inProgress<T extends Assignment>(list: T[]): T[] {
   const oldest = byTime((a) => a.stateChangedAt, false);
   return list
     .filter((a) => IN_PROGRESS_STATES.includes(a.state))
@@ -59,7 +63,7 @@ export function inProgress(list: Assignment[]) {
 }
 
 /** "History": finished work, newest first, optionally one state only. */
-export function history(list: Assignment[], filter: HistoryFilter = "all") {
+export function history<T extends Assignment>(list: T[], filter: HistoryFilter = "all"): T[] {
   const states = historyStates(filter);
   return list
     .filter((a) => states.includes(a.state))
@@ -70,7 +74,7 @@ export function history(list: Assignment[], filter: HistoryFilter = "all") {
  * Merges a fresher copy (from the detail dialog) into a list: replaces the
  * same id when the revision is at least as new, otherwise leaves the list.
  */
-export function mergeAssignment(list: Assignment[], next: Assignment): Assignment[] {
+export function mergeAssignment<T extends Assignment>(list: T[], next: T): T[] {
   const index = list.findIndex((a) => a.id === next.id);
   if (index === -1) return [next, ...list];
   if (list[index].revision > next.revision) return list;
@@ -154,7 +158,8 @@ export function homeAgentSummary(list: Assignment[]): HomeAgentSummary | null {
 
 // --- Availability -------------------------------------------------------------
 
-export type AvailabilityReason = "agent_disabled" | "no_key" | "key_unreadable";
+export type AvailabilityReason = AssignmentUnavailableReason;
+/** AssignmentAvailability, read defensively: an unknown reason is kept as "unavailable". */
 export type Availability = { available: boolean; reason?: AvailabilityReason };
 
 export const AVAILABILITY_COPY: Record<AvailabilityReason, { message: string; agent: boolean; settings: boolean }> = {
@@ -199,12 +204,7 @@ export function sourceProject(notes: Note[], sourceNoteId: string | null): { id:
 /** "Same as source" (the server picks), or an explicit project or none. */
 export type ProjectChoice = { mode: "source" } | { mode: "pick"; projectId: string | null };
 
-export type SaveDocumentBody = {
-  expectedRevision: number;
-  artifactId: string;
-  projectId?: string | null;
-  title?: string;
-};
+export type SaveDocumentBody = SaveDocumentInput;
 
 /**
  * The save-document request. "Same as source" omits projectId so the server

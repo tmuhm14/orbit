@@ -11,10 +11,9 @@ import {
   sourceProject,
   type ProjectChoice,
 } from "@/lib/agents-view";
-import { savedNoteIdOf } from "@/lib/assignment-api";
 import { AssignmentErrorNotice } from "./assignment-status";
 import { ProjectPicker } from "./project-picker";
-import { assignmentsU05, errorCodeOf } from "./use-assignment";
+import { assignments, errorCodeOf, savedNoteIdOf } from "./use-assignment";
 
 /** "Saved as <document>", opening it in the editor. */
 export function SavedDocumentLink({
@@ -95,7 +94,7 @@ export function SaveDocumentForm({
     setBusy(true);
     setError(null);
     try {
-      const result = await assignmentsU05.saveDocument(
+      const result = await assignments.saveDocument(
         assignment.id,
         saveDocumentBody({
           expectedRevision: assignment.revision,
@@ -107,8 +106,7 @@ export function SaveDocumentForm({
       );
       onSaved(result.note.id, result.assignment);
     } catch (failure) {
-      // Save-document codes (already_saved, project_*) arrive on the same error type.
-      const code: string = errorCodeOf(failure);
+      const code = errorCodeOf(failure);
       setError({ code, noteId: savedNoteIdOf(failure) });
       setBusy(false);
       if (refetchOn(code) || code === "already_saved") await onReload();

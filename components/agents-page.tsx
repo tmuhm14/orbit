@@ -2,9 +2,8 @@
 
 import { useId, useMemo } from "react";
 import { ChevronRight, History, Hourglass, LoaderCircle, Sparkles } from "lucide-react";
-import type { Assignment } from "@/lib/assignments/types";
+import type { AssignmentListItem } from "@/lib/assignments/types";
 import type { Note } from "@/lib/notes";
-import type { AssignmentListItem } from "@/lib/assignment-api";
 import { failureCopy, itemTitle } from "@/lib/assignment-view";
 import {
   HISTORY_FILTERS,
@@ -26,7 +25,7 @@ function AgentRow({
   now,
   onOpen,
 }: {
-  assignment: Assignment;
+  assignment: AssignmentListItem;
   notesById: Map<string, Note>;
   now: number;
   onOpen: (id: string) => void;
@@ -51,7 +50,7 @@ function AgentRow({
             <AssignmentStateBadge state={assignment.state} />
             <small>{rowTimes(assignment, now)}</small>
           </span>
-          {(assignment as AssignmentListItem).savedNoteId && (
+          {assignment.savedNoteId && (
             <span className="agent-row-saved">Saved as a document</span>
           )}
           {assignment.state === "failed" && (
@@ -119,7 +118,7 @@ export function AgentsPage() {
   const past = historyOf(data.history, data.filter);
   const filterId = useId();
   const nothingYet = data.loaded && !data.open.length && !data.history.length && data.filter === "all";
-  const row = (a: Assignment) => (
+  const row = (a: AssignmentListItem) => (
     <AgentRow key={a.id} assignment={a} notesById={notesById} now={now} onOpen={openAssignment} />
   );
 

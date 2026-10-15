@@ -14,8 +14,8 @@ import {
 import type {
   Assignment,
   AssignmentDetail,
-  AssignmentErrorCode,
   AssignmentEvent,
+  AssignmentRouteErrorCode,
 } from "./assignments/types.ts";
 import { itemKind, type Note } from "./notes.ts";
 
@@ -178,13 +178,7 @@ export function failureCopy(code: string | null | undefined): string {
 /** What a friendly error message offers next. */
 export type ErrorAction = "settings" | "existing" | "saved" | "refetch" | "reload" | "retry" | null;
 export type ErrorCopy = { message: string; action: ErrorAction };
-/** Codes only `POST /:id/save-document` returns (U-05). */
-export type SaveDocumentErrorCode =
-  | "already_saved"
-  | "invalid_project_link"
-  | "project_cycle"
-  | "project_depth_exceeded";
-export type ViewErrorCode = AssignmentErrorCode | SaveDocumentErrorCode | "network_error" | "unexpected_response";
+export type ViewErrorCode = AssignmentRouteErrorCode | "network_error" | "unexpected_response";
 
 export const ERROR_COPY: Record<ViewErrorCode, ErrorCopy> = {
   agent_disabled: { message: "Turn on the agent and save a model key", action: "settings" },
@@ -272,12 +266,6 @@ export function timelineEntries(
   const entries: TimelineEntry[] = [];
   for (const event of detail.events) {
     const base = { id: event.id, at: event.createdAt };
-    // U-05 event, not yet in AssignmentEventType: { artifactId, noteId }.
-    if ((event.type as string) === "artifact_saved") {
-      const noteId = str(event.payload.noteId);
-      entries.push({ ...base, tone: "good", title: "Saved as a document", ...(noteId ? { noteId } : {}) });
-      continue;
-    }
     switch (event.type) {
       case "state_changed": {
         const { title, tone } = stateTitle(event);
@@ -326,6 +314,11 @@ export function timelineEntries(
       case "context_unavailable":
         entries.push({ ...base, tone: "bad", title: "A context item couldn’t be read" });
         break;
+      case "artifact_saved": {
+        const noteId = str(event.payload.noteId);
+        entries.push({ ...base, tone: "good", title: "Saved as a document", ...(noteId ? { noteId } : {}) });
+        break;
+      }
       case "item_detached":
         entries.push({
           ...base,

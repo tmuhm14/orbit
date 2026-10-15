@@ -2,14 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AssignmentApiError, assignmentsClient } from "@/lib/assignments/client";
-import type { Assignment, AssignmentDetail } from "@/lib/assignments/types";
+import type { Assignment, AssignmentDetail, AssignmentListItem } from "@/lib/assignments/types";
 import {
   currentAssignmentFor,
   detailPollDelay,
   itemPollDelay,
   refetchOn,
 } from "@/lib/assignment-view";
-import { assignmentApi } from "@/lib/assignment-api";
 import {
   HISTORY_PAGE,
   OPEN_STATES,
@@ -18,18 +17,22 @@ import {
   mergeAssignment,
   nextHistoryLimit,
   pagePollDelay,
+  parseAvailability,
   type Availability,
   type HistoryFilter,
 } from "@/lib/agents-view";
 
 /** One client for the page; same-origin cookie session. */
 export const assignments = assignmentsClient();
-/** U-05 routes (save-document, availability, list by source item). */
-// TODO(U-05 backend): switch to assignmentsClient once merged.
-export const assignmentsU05 = assignmentApi();
 
 export const errorCodeOf = (error: unknown) =>
   error instanceof AssignmentApiError ? error.code : "unexpected_response";
+
+/** The existing document an `already_saved` error points at, if any. */
+export function savedNoteIdOf(error: unknown): string | null {
+  const noteId = error instanceof AssignmentApiError ? error.body?.noteId : undefined;
+  return typeof noteId === "string" && noteId ? noteId : null;
+}
 
 /** Whether the tab is hidden; polling pauses while it is. */
 export function useHidden() {
@@ -67,7 +70,7 @@ export function useItemAssignment(workspaceId: string, noteId: string) {
     try {
       // Narrowed to this item by the server; currentAssignmentFor still
       // filters, so a server that ignores sourceNoteId stays correct.
-      const list = await assignmentsU05.list(workspaceId, { sourceNoteId: noteId, limit: 100 });
+      const list = await assignments.list(workspaceId, { sourceNoteId: noteId, limit: 100 });
       if (!alive.current) return;
       setAssignment(currentAssignmentFor(list, noteId));
       setErrorCode(null);
@@ -254,7 +257,8 @@ export function useAvailability(workspaceId: string, key?: unknown) {
   const refresh = useCallback(async () => {
     if (!workspaceId) return;
     try {
-      const next = await assignmentsU05.availability(workspaceId);
+      // Read defensively: anything unexpected is "unknown", not "available".
+      const next = parseAvailability(await assignments.availability(workspaceId));
       if (alive.current) setAvailability(next);
     } catch {
       if (alive.current) setAvailability(null);
@@ -275,8 +279,8 @@ export function useAvailability(workspaceId: string, key?: unknown) {
  * something) and when the tab becomes visible.
  */
 export function useWorkspaceAssignments(workspaceId: string, version = 0) {
-  const [open, setOpen] = useState<Assignment[]>([]);
-  const [past, setPast] = useState<Assignment[]>([]);
+  const [open, setOpen] = useState<AssignmentListItem[]>([]);
+  const [past, setPast] = useState<AssignmentListItem[]>([]);
   const [filter, setFilterState] = useState<HistoryFilter>("all");
   const [limit, setLimit] = useState(HISTORY_PAGE);
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
@@ -309,8 +313,8 @@ export function useWorkspaceAssignments(workspaceId: string, version = 0) {
     const mine = ++seq.current;
     try {
       const [nextOpen, nextPast] = await Promise.all([
-        assignmentsU05.list(workspaceId, { states: OPEN_STATES, limit: 100 }),
-        assignmentsU05.list(workspaceId, { states: historyStates(filter), limit }),
+        assignments.list(workspaceId, { states: [...OPEN_STATES], limit: 100 }),
+        assignments.list(workspaceId, { states: historyStates(filter), limit }),
       ]);
       // A newer request (another space, filter or limit) wins.
       if (!alive.current || mine !== seq.current) return;
@@ -341,8 +345,10 @@ export function useWorkspaceAssignments(workspaceId: string, version = 0) {
   }, [delay, tick, refresh]);
 
   /** A fresher copy from the detail dialog, into whichever list holds it now. */
-  const adopt = useCallback((next: Assignment) => {
-    const isOpen = OPEN_STATES.includes(next.state);
+  const adopt = useCallback((fresh: Assignment) => {
+    const isOpen = OPEN_STATES.includes(fresh.state);
+    // Detail copies have no savedNoteId; keep the row's (open rows have none).
+    const next: AssignmentListItem = { savedNoteId: null, ...fresh };
     setOpen((list) => (isOpen ? mergeAssignment(list, next) : list.filter((a) => a.id !== next.id)));
     setPast((list) => (isOpen ? list.filter((a) => a.id !== next.id) : list));
   }, []);
@@ -377,7 +383,7 @@ export function useWorkspaceAssignments(workspaceId: string, version = 0) {
  * when `version` changes. Errors keep the last good copy; nothing is invented.
  */
 export function useOpenAssignments(workspaceId: string, version = 0) {
-  const [result, setResult] = useState<{ workspaceId: string; list: Assignment[] } | null>(null);
+  const [result, setResult] = useState<{ workspaceId: string; list: AssignmentListItem[] } | null>(null);
   const [tick, setTick] = useState(0);
   const hidden = useHidden();
   const alive = useRef(true);
@@ -392,7 +398,7 @@ export function useOpenAssignments(workspaceId: string, version = 0) {
     if (!workspaceId) return;
     const mine = ++seq.current;
     try {
-      const list = await assignmentsU05.list(workspaceId, { states: OPEN_STATES, limit: 100 });
+      const list = await assignments.list(workspaceId, { states: [...OPEN_STATES], limit: 100 });
       if (alive.current && mine === seq.current) setResult({ workspaceId, list });
     } catch {
       /* Keep what was shown; the next check retries. */
