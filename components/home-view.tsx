@@ -1,7 +1,8 @@
 "use client";
 
-import { ArrowRight, ArrowUpRight, Mail, MessageSquare, Orbit } from "lucide-react";
-import { BUCKETS, isDueDate, type BucketId, type Note } from "@/lib/notes";
+import { AlertTriangle, ArrowRight, ArrowUpRight, Mail, MessageSquare, Orbit } from "lucide-react";
+import { BUCKETS, followupState, isDueDate, type BucketId, type Note } from "@/lib/notes";
+import { followupSummary } from "@/lib/item-properties";
 import {
   attentionSummary,
   inboxItems,
@@ -89,13 +90,15 @@ const LISTS: Record<"inbox" | "next" | "waiting", ListConfig> = {
     select: waitingItems,
     caption: "Longest untouched first",
     empty: ["Nothing to wait on", "Things you have handed off or are waiting to hear back on go here."],
-    meta: (note) => `Updated ${shortDate(note.updatedAt)}`,
+    // "Waiting on Sam · check Oct 20" when the follow-up fields are set.
+    meta: (note, today) =>
+      (today && followupSummary(note, today).text) || `Updated ${shortDate(note.updatedAt)}`,
   },
 };
 
 /** A short Home list for one bucket, with a link to the full bucket view. */
 export function HomeList({ kind }: { kind: keyof typeof LISTS }) {
-  const { notes, workspaceId, loaded, loadError, navigate, openNote, capture, items } =
+  const { notes, workspaceId, loaded, loadError, navigate, openNote, capture, items, conflictIds } =
     useWorkspaceShell();
   const dragProps = useDraggableItem();
   // Only a real quick capture or move sets these; loads and refreshes don't.
@@ -152,6 +155,8 @@ export function HomeList({ kind }: { kind: keyof typeof LISTS }) {
               const meta = today ? config.meta(note, today) : null;
               const SourceIcon = note.source === "slack" ? MessageSquare : note.source === "email" ? Mail : null;
               const overdue = kind === "next" && today && isDueDate(note.dueDate) && note.dueDate <= today;
+              const check = kind === "waiting" && today ? followupState(note, today) : null;
+              const metaClass = overdue || check === "due" ? "is-due" : check === "overdue" ? "is-overdue" : "";
               return (
                 <li
                   key={note.id}
@@ -159,8 +164,16 @@ export function HomeList({ kind }: { kind: keyof typeof LISTS }) {
                   {...dragProps(note)}
                 >
                   <button className="home-item" onClick={() => openNote(note.id)}>
-                    <strong>{untitled(note)}</strong>
-                    <span className={`home-item-meta ${overdue ? "is-due" : ""}`}>
+                    <strong>
+                      {untitled(note)}
+                      {conflictIds.has(note.id) && (
+                        <span className="conflict-badge">
+                          <AlertTriangle size={11} aria-hidden="true" />
+                          Changed elsewhere
+                        </span>
+                      )}
+                    </strong>
+                    <span className={`home-item-meta ${metaClass}`}>
                       {kind === "inbox" && SourceIcon && <SourceIcon size={11} aria-hidden="true" />}
                       {meta ?? " "}
                     </span>

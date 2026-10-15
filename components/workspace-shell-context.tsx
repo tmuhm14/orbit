@@ -60,6 +60,8 @@ export type WorkspaceShellValue = {
    * and show a toast when it did.
    */
   items: ItemActions;
+  /** Notes that changed elsewhere while edited here (ADR 002); lists mark them. */
+  conflictIds: ReadonlySet<string>;
 };
 
 const WorkspaceShellContext = createContext<WorkspaceShellValue | null>(null);
