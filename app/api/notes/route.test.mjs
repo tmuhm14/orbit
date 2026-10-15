@@ -235,3 +235,24 @@ test("GET returns kind and projectId; legacy rows read as notes", async () => {
   assert.match(selects[0], /,kind,project_id,waiting_on,waiting_for,next_check_on$/);
   assert.deepEqual(notes.map((n) => [n.kind, n.projectId]), [["note", null], ["task", "33333333-3333-4333-8333-333333333333"]]);
 });
+
+test("PUT saves follow-up fields trimmed, keeps them when absent, and rejects bad values", async () => {
+  const note = { ...newNote("Waiting"), kind: "task", waitingOn: "  Dana ", waitingFor: "Signed quote", nextCheckOn: "2026-10-20" };
+  const saved = await put([{ ...note, expectedRevision: null }]);
+  assert.equal(saved.status, 200);
+  const item = calls.at(-1)[1].p_notes[0];
+  assert.deepEqual([item.waiting_on, item.waiting_for, item.next_check_on], ["Dana", "Signed quote", "2026-10-20"]);
+  // An older client that never sends them leaves them unchanged.
+  const { waitingOn: _o, waitingFor: _f, nextCheckOn: _c, ...old } = { ...note, title: "Renamed" };
+  assert.equal((await put([{ ...old, expectedRevision: 1 }])).status, 200);
+  const legacyItem = calls.at(-1)[1].p_notes[0];
+  assert.equal(["waiting_on", "waiting_for", "next_check_on"].some((k) => Object.hasOwn(legacyItem, k)), false);
+  assert.equal(rows.get(note.id).waiting_on, "Dana");
+  const before = calls.length;
+  for (const bad of [{ waitingOn: "x".repeat(201) }, { waitingFor: "a\nb" }, { nextCheckOn: "2026-02-30" }]) {
+    const response = await put([{ ...note, ...bad, expectedRevision: 2 }]);
+    assert.deepEqual([response.status, response.body.code], [400, "invalid_payload"], JSON.stringify(bad));
+    assert.doesNotMatch(JSON.stringify(response.body), /xxxx|Dana/);
+  }
+  assert.equal(calls.length, before, "nothing written for an invalid batch");
+});
