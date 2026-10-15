@@ -24,9 +24,12 @@ export function fromSlackLinkRow(row: SlackLinkRow): SlackConnection {
 /**
  * The signed-in user's workspaces (creating Personal on first use) and Slack
  * links. Uses the user's session, so row-level security scopes both reads.
+ * Returns null when a step fails, after passing that step's error to
+ * `onError` so the caller can log its code (never its message).
  */
 export async function loadWorkspaces(
   supabase: SupabaseClient,
+  onError: (error: unknown) => void = () => {},
 ): Promise<{ workspaces: Workspace[]; slack: SlackConnection[] } | null> {
   const list = () =>
     supabase
@@ -36,16 +39,27 @@ export async function loadWorkspaces(
       .order("created_at")
       .returns<Workspace[]>();
   let { data: workspaces, error } = await list();
-  if (error || !workspaces) return null;
+  if (error || !workspaces) {
+    onError(error);
+    return null;
+  }
   if (!workspaces.length) {
-    await supabase.from("workspaces").insert({ name: "Personal", is_default: true });
+    const { error: insertError } = await supabase
+      .from("workspaces")
+      .insert({ name: "Personal", is_default: true });
     ({ data: workspaces, error } = await list());
-    if (error || !workspaces?.length) return null;
+    if (error || !workspaces?.length) {
+      onError(error ?? insertError);
+      return null;
+    }
   }
   const { data: links, error: linkError } = await supabase
     .from("slack_links")
     .select("slack_team_id,slack_team_name,slack_user_id,workspace_id")
     .returns<SlackLinkRow[]>();
-  if (linkError) return null;
+  if (linkError || !links) {
+    onError(linkError);
+    return null;
+  }
   return { workspaces, slack: links.map(fromSlackLinkRow) };
 }
