@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
+// Per-feature styles, moving out of globals.css one feature at a time.
+import "./styles/settings.css";
 
 export const metadata: Metadata = {
   title: "Orbit — A little space for a clearer mind",

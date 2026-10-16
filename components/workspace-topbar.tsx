@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Bot, CalendarClock, ChevronRight, PanelLeftOpen, Plus } from "lucide-react";
 import { BUCKETS } from "@/lib/notes";
+import { settingsHref, settingsSection } from "@/lib/settings-sections";
 import { WorkspaceSwitcher } from "./workspace-switcher";
 import { useWorkspaceShell } from "./workspace-shell-context";
 
@@ -26,7 +27,11 @@ export function WorkspaceTopbar({
     notes.find((n) => n.id === id)?.title.trim() || fallback;
   // Projects › <project> and <item> on the U-03 pages; the notes views as before.
   const parent =
-    route.page === "project" ? { href: "/projects", label: "Projects" } : null;
+    route.page === "project"
+      ? { href: "/projects", label: "Projects" }
+      : route.page === "settings"
+        ? { href: settingsHref(), label: "Settings" }
+        : null;
   const pageLabel =
     route.page === "tasks"
       ? "Tasks"
@@ -36,6 +41,8 @@ export function WorkspaceTopbar({
           ? titleOf(route.id, "Untitled project")
           : route.page === "library"
             ? "Library"
+            : route.page === "settings"
+              ? settingsSection(route.section).label
             : route.page === "item"
               ? titleOf(route.id, "Untitled thought")
               : null;

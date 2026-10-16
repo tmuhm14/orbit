@@ -65,7 +65,7 @@ export function AssignmentErrorNotice({
           <p className="assignment-error-links">
             {actions.onOpenSettings && (
               <a
-                href="/settings"
+                href="/settings/model"
                 onClick={(e) => {
                   e.preventDefault();
                   actions.onOpenSettings?.();
@@ -134,7 +134,7 @@ export function AgentAvailabilityNotice({
           <p className="assignment-error-links">
             {copy.settings && onOpenSettings && (
               <a
-                href="/settings"
+                href="/settings/model"
                 onClick={(e) => {
                   e.preventDefault();
                   onOpenSettings();

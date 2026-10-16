@@ -1,12 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, Copy, KeyRound, Plus, RefreshCw } from "lucide-react";
+import Link from "next/link";
+import { KeyRound, Plus, RefreshCw, ShieldCheck } from "lucide-react";
 import type { Workspace } from "@/lib/notes";
 import {
   CODE_LABELS, GRANT_OPTIONS, OPERATION_LABELS, fromKeys, grantKeys, grantSummary, keyDisplay, when,
   type AccessEvent, type AgentClient,
 } from "@/lib/grants/view";
+import { GUIDE_ANCHORS, guideHref, isDirty } from "@/lib/settings-sections";
+import { ConfirmDialog, FormDialog, SidePanel } from "./side-panel";
+import { CopyButton } from "./settings/copy";
 
 async function send(path: string, init?: RequestInit) {
   const response = await fetch(path, { cache: "no-store", ...init,
@@ -15,6 +19,8 @@ async function send(path: string, init?: RequestInit) {
   if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Request failed");
   return data;
 }
+
+const message = (failure: unknown, fallback: string) => (failure instanceof Error ? failure.message : fallback);
 
 /** Checkbox grid: one row per space, one column per capability. */
 function GrantGrid({ workspaces, value, onChange, disabled, idPrefix }: {
@@ -26,66 +32,169 @@ function GrantGrid({ workspaces, value, onChange, disabled, idPrefix }: {
     onChange(next);
   };
   return <table className="agent-keys-grid">
+    <caption className="sr-only">Access per space</caption>
     <thead><tr><th scope="col">Space</th>{GRANT_OPTIONS.map((o) => <th scope="col" key={o.capability}>{o.label}</th>)}</tr></thead>
     <tbody>{workspaces.map((space) => <tr key={space.id}>
       <th scope="row">{space.name}{!space.agentEnabled && <span className="agent-keys-off" title="Agent access is off for this space, so no key can use it until you turn it on."> · agent access off</span>}</th>
       {GRANT_OPTIONS.map((o) => {
         const key = `${space.id}:${o.capability}`;
-        return <td key={o.capability}><input id={`${idPrefix}-${key}`} type="checkbox" aria-label={`${o.label} ${space.name}`}
-          checked={value.has(key)} disabled={disabled} onChange={() => toggle(key)} /></td>;
+        return <td key={o.capability}><label className="agent-keys-cell"><input id={`${idPrefix}-${key}`} type="checkbox" aria-label={`${o.label} ${space.name}`}
+          checked={value.has(key)} disabled={disabled} onChange={() => toggle(key)} /></label></td>;
       })}
     </tr>)}</tbody>
   </table>;
 }
 
-function ClientRow({ client, workspaces, onChanged, onToast }: {
-  client: AgentClient; workspaces: Workspace[]; onChanged: () => Promise<void>; onToast: (message: string) => void;
+const GRANT_HELP = "Read lists the space’s notes. Capture adds new Inbox notes; it can’t change or delete anything. Grant only what the bot needs.";
+
+/**
+ * New key in one dialog, two steps: name and access, then the one-time
+ * reveal. Closing the reveal before "I’ve saved it" asks first.
+ */
+function CreateKeyDialog({ workspaces, onCreated, onClose, onToast }: {
+  workspaces: Workspace[]; onCreated: () => Promise<void>; onClose: () => void; onToast: (message: string) => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(() => grantKeys(client.grants));
+  const [name, setName] = useState("");
+  const [grants, setGrants] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
-  async function run(action: () => Promise<unknown>, success: string) {
-    setBusy(true);
-    try { await action(); await onChanged(); onToast(success); setEditing(false); }
-    catch (failure) { onToast(failure instanceof Error ? failure.message : "Could not update the key"); }
-    finally { setBusy(false); }
-  }
+  const [error, setError] = useState("");
+  const [created, setCreated] = useState<{ name: string; key: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  if (created) return (
+    <FormDialog
+      key="reveal"
+      title="Copy your key now"
+      description={<>You won’t see it again. Orbit keeps only a fingerprint of the key for <strong>{created.name}</strong>.</>}
+      onClose={onClose}
+      dirty
+      discardTitle="Close without saving the key?"
+      discardMessage={copied
+        ? "Make sure the key is in your bot’s secret store. Orbit can’t show it again."
+        : "You haven’t copied the key. Once this closes it can’t be shown again; you’d need to create a new one."}
+      discardLabel="Close anyway"
+      footer={
+        <footer className="surface-footer">
+          <div className="surface-footer-extra" />
+          <div className="surface-footer-main">
+            <button type="button" className="primary-button small" onClick={onClose}>I’ve saved it</button>
+          </div>
+        </footer>
+      }
+    >
+      <div className="agent-keys-reveal">
+        <code aria-label="New API key">{created.key}</code>
+        <CopyButton text={created.key} label="Copy key" showLabel className="secondary-button" onToast={onToast} onCopied={() => setCopied(true)} />
+      </div>
+      <p className="settings-hint">Store it like a password: in the bot’s secret store or environment, never in prompts, logs or source control.</p>
+    </FormDialog>
+  );
+
+  return (
+    <FormDialog
+      key="create"
+      title="New API key"
+      description="Give each bot its own key, so you can see and revoke each one separately."
+      onClose={onClose}
+      dirty={!!name || grants.size > 0}
+      busy={busy}
+      error={error}
+      submitLabel="Create key"
+      busyLabel="Creating…"
+      submitDisabled={!name.trim()}
+      onSubmit={async (event) => {
+        event.preventDefault();
+        setBusy(true); setError("");
+        try {
+          const data = await send("/api/agent-clients", { method: "POST", body: JSON.stringify({ name: name.trim(), grants: fromKeys(grants) }) });
+          setCreated({ name: name.trim(), key: data.apiKey as string });
+          setBusy(false);
+          await onCreated().catch(() => undefined);
+        } catch (failure) {
+          setError(message(failure, "Couldn’t create the API key"));
+          setBusy(false);
+        }
+      }}
+    >
+      <div className="settings-fields">
+        <label className="settings-field">Name
+          <input data-autofocus value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Grok bot" maxLength={100} required />
+        </label>
+        <fieldset className="settings-fieldset">
+          <legend>Access</legend>
+          <GrantGrid workspaces={workspaces} value={grants} onChange={setGrants} disabled={busy} idPrefix="new" />
+          <p className="settings-hint">{GRANT_HELP}</p>
+        </fieldset>
+      </div>
+    </FormDialog>
+  );
+}
+
+function EditAccessPanel({ client, workspaces, onSaved, onClose }: {
+  client: AgentClient; workspaces: Workspace[]; onSaved: () => Promise<void>; onClose: () => void;
+}) {
+  const [initial] = useState(() => grantKeys(client.grants));
+  const [draft, setDraft] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const dirty = isDirty({ g: initial }, { g: draft });
+  return (
+    <SidePanel
+      title={`Edit access for ‘${client.name}’`}
+      description={<>Key <code>{keyDisplay(client.keyPrefix)}</code>. Changes apply on the bot’s next request.</>}
+      onClose={onClose}
+      dirty={dirty}
+      busy={busy}
+      error={error}
+      submitLabel="Save access"
+      submitDisabled={!dirty}
+      onSubmit={async (event) => {
+        event.preventDefault();
+        setBusy(true); setError("");
+        try {
+          await send(`/api/agent-clients/${client.id}/grants`, { method: "PUT", body: JSON.stringify({ grants: fromKeys(draft) }) });
+          await onSaved();
+        } catch (failure) {
+          setError(message(failure, "Couldn’t update the key"));
+          setBusy(false);
+        }
+      }}
+    >
+      <GrantGrid workspaces={workspaces} value={draft} onChange={setDraft} disabled={busy} idPrefix={`edit-${client.id}`} />
+      <p className="settings-hint">{GRANT_HELP}</p>
+      <p className="settings-hint">A space whose agent access is off blocks every key, whatever it’s granted. Turn it on in Model &amp; agent.</p>
+    </SidePanel>
+  );
+}
+
+function ClientRow({ client, workspaces, onEdit, onRevoke }: {
+  client: AgentClient; workspaces: Workspace[]; onEdit?: () => void; onRevoke?: () => void;
+}) {
   const revoked = !!client.revokedAt;
-  return <li className={`agent-keys-client${revoked ? " is-revoked" : ""}`}>
-    <div className="agent-keys-client-main">
-      <div className="agent-keys-client-name"><strong>{client.name}</strong><code>{keyDisplay(client.keyPrefix)}</code></div>
-      <div className="agent-keys-client-meta">
+  return <li className={`settings-row agent-keys-client${revoked ? " is-revoked" : ""}`}>
+    <div className="settings-row-main">
+      <strong>{client.name} <code className="agent-keys-prefix">{keyDisplay(client.keyPrefix)}</code></strong>
+      <span className="settings-row-meta">
         <span>Created {when(client.createdAt)}</span>
         <span>Last used {when(client.lastUsedAt)}</span>
-        {revoked ? <span>Revoked {when(client.revokedAt)}</span> : <span>{grantSummary(client.grants, workspaces)}</span>}
-      </div>
+        {revoked ? <span>Revoked {when(client.revokedAt)}</span> : <span className="agent-keys-grants">{grantSummary(client.grants, workspaces)}</span>}
+      </span>
     </div>
-    {!revoked && <div className="agent-keys-client-actions">
-      <button className="text-button" disabled={busy} onClick={() => { setDraft(grantKeys(client.grants)); setEditing(!editing); }}>
-        {editing ? "Cancel" : "Edit access"}</button>
-      <button className="text-button agent-keys-revoke" disabled={busy} onClick={() => {
-        if (confirm(`Revoke ${client.name}? It stops working on its next request.`))
-          void run(() => send(`/api/agent-clients/${client.id}/revoke`, { method: "POST" }), "Key revoked");
-      }}>Revoke</button>
-    </div>}
-    {editing && <div className="agent-keys-edit">
-      <GrantGrid workspaces={workspaces} value={draft} onChange={setDraft} disabled={busy} idPrefix={`edit-${client.id}`} />
-      <button className="secondary-button" disabled={busy} onClick={() => void run(() => send(`/api/agent-clients/${client.id}/grants`,
-        { method: "PUT", body: JSON.stringify({ grants: fromKeys(draft) }) }), "Access updated")}>{busy ? "Saving…" : "Save access"}</button>
+    {!revoked && <div className="settings-row-actions">
+      <button type="button" className="text-button" aria-haspopup="dialog" onClick={onEdit}>Edit access<span className="sr-only"> for {client.name}</span></button>
+      <button type="button" className="text-button settings-danger-text" aria-haspopup="dialog" onClick={onRevoke}>Revoke<span className="sr-only"> {client.name}</span></button>
     </div>}
   </li>;
 }
 
-/** Settings → Connections → Agents & API keys. */
+/** Settings → Agents & API keys (A-05). */
 export function AgentKeysSettings({ workspaces, onToast }: { workspaces: Workspace[]; onToast: (message: string) => void }) {
   const [clients, setClients] = useState<AgentClient[] | null>(null);
   const [events, setEvents] = useState<AccessEvent[] | null>(null);
   const [error, setError] = useState("");
-  const [name, setName] = useState("");
-  const [grants, setGrants] = useState<Set<string>>(new Set());
-  const [busy, setBusy] = useState(false);
-  const [newKey, setNewKey] = useState<{ name: string; key: string } | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<AgentClient | null>(null);
+  const [revoking, setRevoking] = useState<AgentClient | null>(null);
 
   const refresh = useCallback(async () => {
     const [list, log] = await Promise.all([send("/api/agent-clients"), send("/api/agent-clients/access-log?limit=50")]);
@@ -94,69 +203,46 @@ export function AgentKeysSettings({ workspaces, onToast }: { workspaces: Workspa
     setError("");
   }, []);
   useEffect(() => {
-    void refresh().catch((failure) => setError(failure instanceof Error ? failure.message : "Could not load API keys"));
+    void refresh().catch((failure) => setError(message(failure, "Couldn’t load API keys")));
   }, [refresh]);
-
-  async function create(event: React.FormEvent) {
-    event.preventDefault();
-    setBusy(true); setError("");
-    try {
-      const data = await send("/api/agent-clients", { method: "POST", body: JSON.stringify({ name: name.trim(), grants: fromKeys(grants) }) });
-      setNewKey({ name: name.trim(), key: data.apiKey as string });
-      setCopied(false);
-      setName(""); setGrants(new Set());
-      await refresh();
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "Could not create the API key");
-    } finally { setBusy(false); }
-  }
 
   const clientName = (id: string | null) => clients?.find((c) => c.id === id)?.name ?? "Deleted key";
   const spaceName = (id: string | null) => (id && workspaces.find((w) => w.id === id)?.name) || (id ? "Deleted space" : "—");
   const active = clients?.filter((c) => !c.revokedAt) ?? [];
   const revoked = clients?.filter((c) => c.revokedAt) ?? [];
 
-  return <section className="settings-card settings-card-wide" aria-labelledby="settings-agent-keys">
-    <div className="settings-card-heading"><div><h2 id="settings-agent-keys">Agents & API keys</h2>
-      <p>Give each external agent or bot its own key, limited to the spaces and actions you choose. Revoking a key or removing access applies on its next request.</p></div></div>
-    {error && <p className="scheduled-error" role="alert">{error}</p>}
-
-    {newKey && <div className="agent-keys-reveal" role="status">
-      <div><strong>Copy the key for {newKey.name} now.</strong> Orbit stores only a fingerprint and won’t show it again.</div>
-      <div className="agent-keys-reveal-row">
-        <code aria-label="New API key">{newKey.key}</code>
-        <button className="icon-button" aria-label="Copy API key" onClick={() => void navigator.clipboard.writeText(newKey.key)
-          .then(() => { setCopied(true); onToast("API key copied"); }, () => onToast("Could not copy the key"))}>
-          {copied ? <Check size={15} /> : <Copy size={15} />}</button>
+  return <>
+    <section className="settings-card" aria-labelledby="agent-keys-list">
+      <div className="settings-card-heading has-action">
+        <div>
+          <h2 id="agent-keys-list"><KeyRound size={15} aria-hidden="true" /> API keys</h2>
+          <p>Each external agent or bot gets its own key, limited to the spaces and actions you choose. <Link href={guideHref(GUIDE_ANCHORS.externalBots)}>How do I set this up?</Link></p>
+        </div>
+        <button type="button" className="secondary-button" aria-haspopup="dialog" disabled={!clients} onClick={() => setCreating(true)}>
+          <Plus size={14} aria-hidden="true" /> New key
+        </button>
       </div>
-      <button className="text-button" onClick={() => setNewKey(null)}>I’ve saved it</button>
-    </div>}
+      {error && <p className="settings-error" role="alert">{error}</p>}
+      {!clients ? <p className="settings-empty" role="status">{error ? "Unavailable." : "Loading…"}</p> : !active.length
+        ? <p className="settings-empty">No active keys. Create one for each bot that should read or capture notes.</p>
+        : <ul className="settings-list">{active.map((c) => <ClientRow key={c.id} client={c} workspaces={workspaces}
+            onEdit={() => setEditing(c)} onRevoke={() => setRevoking(c)} />)}</ul>}
+      {revoked.length > 0 && <details className="agent-keys-revoked"><summary>{revoked.length} revoked</summary>
+        <ul className="settings-list">{revoked.map((c) => <ClientRow key={c.id} client={c} workspaces={workspaces} />)}</ul></details>}
+    </section>
 
-    <div className="agent-keys-layout">
-      <form className="settings-service agent-keys-create" onSubmit={create}>
-        <div className="settings-service-heading"><h3><KeyRound size={13} /> New key</h3></div>
-        <label>Name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Grok bot" maxLength={100} required /></label>
-        <GrantGrid workspaces={workspaces} value={grants} onChange={setGrants} disabled={busy} idPrefix="new" />
-        <p className="settings-help">Read lists the space’s notes. Capture adds new Inbox notes; it can’t change or delete anything.</p>
-        <button className="secondary-button" type="submit" disabled={busy || !name.trim()}><Plus size={14} /> {busy ? "Creating…" : "Create key"}</button>
-      </form>
-
-      <div className="agent-keys-clients">
-        <h3>Keys</h3>
-        {!clients ? <p className="agent-muted">{error ? "Unavailable." : "Loading…"}</p> : !active.length
-          ? <p className="agent-muted">No active keys.</p>
-          : <ul>{active.map((c) => <ClientRow key={`${c.id}:${c.grants.length}:${c.lastUsedAt}`} client={c} workspaces={workspaces} onChanged={refresh} onToast={onToast} />)}</ul>}
-        {revoked.length > 0 && <details className="agent-keys-revoked"><summary>{revoked.length} revoked</summary>
-          <ul>{revoked.map((c) => <ClientRow key={c.id} client={c} workspaces={workspaces} onChanged={refresh} onToast={onToast} />)}</ul></details>}
+    <section className="settings-card" aria-labelledby="agent-keys-log">
+      <div className="settings-card-heading has-action">
+        <div>
+          <h2 id="agent-keys-log"><ShieldCheck size={15} aria-hidden="true" /> Recent access</h2>
+          <p>What each agent did, never what it read or wrote. Kept 90 days. <Link href={guideHref(GUIDE_ANCHORS.accessLog)}>Reading the log</Link></p>
+        </div>
+        <button type="button" className="icon-button" aria-label="Refresh access log" title="Refresh"
+          onClick={() => void refresh().then(() => onToast("Access log refreshed"), () => onToast("Couldn’t refresh"))}><RefreshCw size={14} /></button>
       </div>
-    </div>
-
-    <div className="agent-keys-log">
-      <div className="agent-keys-log-heading"><h3>Recent access</h3>
-        <button className="icon-button" aria-label="Refresh access log" onClick={() => void refresh().catch(() => onToast("Could not refresh"))}><RefreshCw size={14} /></button></div>
-      {!events ? <p className="agent-muted">{error ? "Unavailable." : "Loading…"}</p> : !events.length
-        ? <p className="agent-muted">No access yet.</p>
-        : <table className="agent-keys-events">
+      {!events ? <p className="settings-empty">{error ? "Unavailable." : "Loading…"}</p> : !events.length
+        ? <p className="settings-empty">No access yet.</p>
+        : <div className="agent-keys-events-wrap"><table className="agent-keys-events">
           <thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Space</th><th scope="col">Result</th></tr></thead>
           <tbody>{events.map((e) => <tr key={e.id} className={e.outcome === "denied" ? "is-denied" : undefined}>
             <td>{when(e.occurredAt)}</td>
@@ -165,8 +251,25 @@ export function AgentKeysSettings({ workspaces, onToast }: { workspaces: Workspa
             <td>{spaceName(e.workspaceId)}</td>
             <td>{e.outcome === "allowed" ? "Allowed" : `Refused · ${CODE_LABELS[e.code ?? ""] ?? e.code}`}</td>
           </tr>)}</tbody>
-        </table>}
-      <p className="settings-help">Shows what each agent did, never what it read or wrote. Kept 90 days.</p>
-    </div>
-  </section>;
+        </table></div>}
+    </section>
+
+    {creating && <CreateKeyDialog workspaces={workspaces} onToast={onToast} onClose={() => setCreating(false)} onCreated={refresh} />}
+    {editing && <EditAccessPanel client={editing} workspaces={workspaces} onClose={() => setEditing(null)}
+      onSaved={async () => { await refresh(); setEditing(null); onToast("Access updated"); }} />}
+    {revoking && <ConfirmDialog
+      tone="danger"
+      title={`Revoke ‘${revoking.name}’?`}
+      body={<>Key <code>{keyDisplay(revoking.keyPrefix)}</code> stops working on its next request. This can’t be undone.</>}
+      hint="To keep the bot running, create a new key first and swap it in."
+      confirmLabel="Revoke key"
+      onCancel={() => setRevoking(null)}
+      onConfirm={async () => {
+        await send(`/api/agent-clients/${revoking.id}/revoke`, { method: "POST" });
+        await refresh().catch(() => undefined);
+        onToast(`${revoking.name} revoked`);
+        setRevoking(null);
+      }}
+    />}
+  </>;
 }

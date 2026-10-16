@@ -28,6 +28,7 @@ export const config = {
   matcher: [
     "/",
     "/settings",
+    "/settings/:path*",
     "/scheduled",
     "/agents",
     "/tasks",

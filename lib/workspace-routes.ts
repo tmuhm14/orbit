@@ -2,11 +2,12 @@
 // Everything a view filters on lives in the URL so links, reloads and the
 // browser's back/forward buttons restore it. Pure: no React, no Next.
 import { BUCKETS, type BucketId } from "./notes.ts";
+import { DEFAULT_SETTINGS_SECTION, parseSettingsSection, type SettingsSection } from "./settings-sections.ts";
 
 /** A page of the workspace shell. `id` is the decoded path segment. */
 export type WorkspaceRoute =
   | { page: "notes" }
-  | { page: "settings" }
+  | { page: "settings"; section: SettingsSection }
   | { page: "scheduled" }
   | { page: "agents" }
   | { page: "tasks" }
@@ -17,7 +18,7 @@ export type WorkspaceRoute =
 
 const STATIC: Record<string, WorkspaceRoute> = {
   "": { page: "notes" },
-  settings: { page: "settings" },
+  settings: { page: "settings", section: DEFAULT_SETTINGS_SECTION },
   scheduled: { page: "scheduled" },
   agents: { page: "agents" },
   tasks: { page: "tasks" },
@@ -41,6 +42,10 @@ function decode(segment: string): string | null {
  */
 export function parseRoute(pathname: string | null | undefined): WorkspaceRoute {
   const parts = (pathname ?? "/").split("/").filter(Boolean);
+  // Settings sub-pages (/settings/account, /settings/agents/setup, ...).
+  // An unknown subpath has no page file (404); read it as the default.
+  if (parts[0] === "settings")
+    return { page: "settings", section: parseSettingsSection(parts.slice(1)) ?? DEFAULT_SETTINGS_SECTION };
   if (parts.length === 2 && (parts[0] === "projects" || parts[0] === "items")) {
     const id = decode(parts[1]) ?? "";
     return parts[0] === "projects" ? { page: "project", id } : { page: "item", id };
