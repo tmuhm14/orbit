@@ -20,6 +20,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { BUCKETS } from "@/lib/notes";
+import { settingsHref } from "@/lib/settings-sections";
 import { signOut } from "@/app/auth/actions";
 import { useBucketDropTargets } from "./item-drag";
 import { WorkspaceSwitcher } from "./workspace-switcher";
@@ -154,7 +155,7 @@ export function WorkspaceSidebar({
             <CalendarClock size={18} />
             <span>Scheduled jobs</span>
           </Link>
-          <Link className={`nav-item ${settingsPage ? "active" : ""}`} href="/settings" onClick={onClose} aria-current={settingsPage ? "page" : undefined}>
+          <Link className={`nav-item ${settingsPage ? "active" : ""}`} href={settingsHref()} onClick={onClose} aria-current={settingsPage ? "page" : undefined}>
             <Settings2 size={18} />
             <span>Settings</span>
           </Link>
