@@ -22,6 +22,12 @@ export async function proxy(request: NextRequest) {
     await supabase.auth.getUser();
   }
   response.headers.set("Cache-Control", "private, no-store, max-age=0");
+  // The OAuth consent screen (ADR 008) must never be framed: a framed Allow
+  // button could be clickjacked.
+  if (request.nextUrl.pathname.startsWith("/oauth/")) {
+    response.headers.set("X-Frame-Options", "DENY");
+    response.headers.set("Content-Security-Policy", "frame-ancestors 'none'");
+  }
   return response;
 }
 export const config = {
@@ -36,6 +42,8 @@ export const config = {
     "/library",
     "/items/:path*",
     "/login",
+    "/oauth/authorize",
+    "/oauth/authorize/:path*",
     "/auth/:path*",
     "/slack/:path*",
     "/api/notes/:path*",
