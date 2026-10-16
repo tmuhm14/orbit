@@ -174,6 +174,7 @@ export function WorkspaceDialogs({
   onUpdateNote,
   onDeleteNote,
   onCloseNote,
+  onOpenFullPage,
   onToggleAgent,
   onAgentNotesChanged,
   onAssignmentChange,
@@ -199,6 +200,7 @@ export function WorkspaceDialogs({
   onUpdateNote: (patch: Partial<Note>) => void;
   onDeleteNote: () => void;
   onCloseNote: () => void;
+  onOpenFullPage: (id: string) => void;
   onToggleAgent: (enabled: boolean) => Promise<unknown>;
   onAgentNotesChanged: () => void;
   onAssignmentChange: (assignment: Assignment) => void;
@@ -215,6 +217,7 @@ export function WorkspaceDialogs({
           api={api}
           onUpdate={onUpdateNote}
           onClose={onCloseNote}
+          onOpenFullPage={() => onOpenFullPage(currentNote.id)}
           onDelete={onDeleteNote}
           onOpenNote={onOpenNote}
           onToast={onToast}

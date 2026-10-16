@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
-import { ChevronRight, Layers, Plus, Sparkles, X } from "lucide-react";
+import Link from "next/link";
+import { ArrowUpRight, ChevronRight, Layers, Plus, Sparkles, X } from "lucide-react";
+import { projectHref } from "@/lib/workspace-routes";
 import {
   BUCKETS,
   ITEM_KINDS,
@@ -76,6 +78,10 @@ export function ProjectField({ note, api }: { note: Note; api: ItemApi }) {
   const id = useId();
   const [error, setError] = useState<LinkErrorCode | null>(null);
   const serverError = api.itemErrorFor(note.id);
+  // Linked to a loaded project: offer its page (/projects/[id]).
+  const project = note.projectId
+    ? api.notes.find((n) => n.id === note.projectId && itemKind(n) === "project")
+    : undefined;
   const describedBy = [error && `${id}-error`, serverError && `${id}-server`].filter(Boolean).join(" ") || undefined;
   return (
     <>
@@ -89,6 +95,12 @@ export function ProjectField({ note, api }: { note: Note; api: ItemApi }) {
           invalid={!!(error || serverError)}
           onSelect={(projectId) => setError(api.linkErrorFor(note.id, projectId) ?? api.setProject(note.id, projectId))}
         />
+        {project && (
+          <Link className="text-button property-link" href={projectHref(project.id)}>
+            Open project <ArrowUpRight size={12} aria-hidden="true" />
+            <span className="sr-only">: {project.title.trim() || "Untitled project"}</span>
+          </Link>
+        )}
         {error && (
           <p className="property-error" id={`${id}-error`} role="alert">
             {LINK_ERROR_MESSAGES[error]} Nothing was changed.
@@ -255,6 +267,9 @@ export function ProjectContents({
           ? "No items in this project yet"
           : `Contains ${children.length} ${children.length === 1 ? "item" : "items"}`}
       </h3>
+      <Link className="text-button property-link" href={projectHref(note.id)}>
+        Open project page <ArrowUpRight size={12} aria-hidden="true" />
+      </Link>
       {children.length === 0 ? (
         <p className="property-hint">Link tasks, notes or sub-projects to this project from their Project field.</p>
       ) : (
