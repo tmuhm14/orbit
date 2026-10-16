@@ -98,9 +98,21 @@ const readyJobs = () => q("update public.jobs set run_at = now() - interval '1 s
 /** Nothing left over from earlier tests competes for the worker. */
 const quiesce = () => q(`update public.jobs set status = 'canceled', finished_at = now(), lease_token = null,
   lease_expires_at = null, leased_by = null where status in ('queued', 'running')`);
+/**
+ * The clock for the worker's maintenance schedule: now, except that a time
+ * in the hourly purge minute is moved back to the end of the minute before
+ * (at most 61 s), so the maintenance list is the same whenever the suite
+ * runs. Reconciliation's grace cutoff only gets earlier, never later.
+ */
+const maintenanceAt = (t = Date.now()) => {
+  const d = new Date(t);
+  return d.getUTCMinutes() === jobs.PURGE_MINUTE
+    ? new Date(t - (d.getUTCSeconds() + 1) * 1000 - d.getUTCMilliseconds())
+    : d;
+};
 const runWorker = (options = {}) => worker.runWorker({
   queue, handlers: jobs.jobHandlers(admin), workerId: "cron:test", deadlineAt: Date.now() + 270_000,
-  maintenance: jobs.jobMaintenance(admin, queue, new Date()), log: () => undefined, ...options,
+  maintenance: jobs.jobMaintenance(admin, queue, maintenanceAt()), log: () => undefined, ...options,
 });
 async function captureConsole(fn) {
   const lines = [];
@@ -309,4 +321,8 @@ test("fast path: kickoff runs the enqueued job at once; without a job it runs th
   const at = (minute) => jobs.jobMaintenance(admin, queue, new Date(Date.UTC(2026, 9, 20, 12, minute))).map((t) => t.name);
   assert.deepEqual(at(jobs.PURGE_MINUTE), ["assignment_leases", "assignment_jobs", "purge"]);
   assert.deepEqual(at(0), ["assignment_leases", "assignment_jobs"]);
+  // The suite's maintenance clock never lands in the purge minute.
+  const inPurgeMinute = Date.UTC(2026, 9, 20, 12, jobs.PURGE_MINUTE, 30, 500);
+  assert.equal(maintenanceAt(inPurgeMinute).toISOString(), `2026-10-20T12:${String(jobs.PURGE_MINUTE - 1).padStart(2, "0")}:59.000Z`);
+  assert.equal(maintenanceAt(Date.UTC(2026, 9, 20, 12, 5)).getTime(), Date.UTC(2026, 9, 20, 12, 5));
 });
