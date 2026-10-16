@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Orbit Agent API",
-    "version": "1.5.0",
-    "description": "External agents authenticate /api/v1 with an Orbit API key (orbitApiKey) created in Settings → Agents & API keys and scoped by capability grants (ADR 004, ADR 007). Supabase user access tokens (bearerAuth) remain supported but are deprecated: responses carry a Deprecation header. No sunset is scheduled by default; if one is (ORBIT_USER_TOKEN_SUNSET), responses add a Sunset header and from that date user tokens are refused with 401 credential_type_unsupported. Browser routes use cookieSession."
+    "version": "1.6.0",
+    "description": "External agents authenticate /api/v1 with an Orbit API key (orbitApiKey) created in Settings → Agents & API keys and scoped by capability grants (ADR 004, ADR 007). Supabase user access tokens (bearerAuth) remain supported but are deprecated: responses carry a Deprecation header. No sunset is scheduled by default; if one is (ORBIT_USER_TOKEN_SUNSET), responses add a Sunset header and from that date user tokens are refused with 401 credential_type_unsupported. Browser routes use cookieSession. The hosted MCP server (/api/mcp, ADR 008) accepts orbitApiKey or orbitOAuth access tokens issued by Orbit's own OAuth 2.1 authorization server (MCP authorization spec revision 2026-07-28)."
   },
   "security": [
     {
@@ -15,6 +15,21 @@
   ],
   "components": {
     "securitySchemes": {
+      "orbitOAuth": {
+        "type": "oauth2",
+        "description": "Orbit-issued OAuth 2.1 tokens for the hosted MCP server only (ADR 008). Public clients, PKCE S256, RFC 8707 resource = <origin>/api/mcp. Access tokens last 1 hour; refresh tokens 30 days and rotate on every use. Discover via /.well-known/oauth-protected-resource.",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "/oauth/authorize",
+            "tokenUrl": "/oauth/token",
+            "refreshUrl": "/oauth/token",
+            "scopes": {
+              "orbit:read": "List spaces and read notes where granted (workspace.read)",
+              "orbit:capture": "Add Inbox notes where granted (item.write create)"
+            }
+          }
+        }
+      },
       "orbitApiKey": {
         "type": "http",
         "scheme": "bearer",
@@ -35,6 +50,86 @@
       }
     },
     "schemas": {
+      "OAuthError": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "error_description": {
+            "type": "string"
+          }
+        }
+      },
+      "Connection": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "redirectHosts",
+          "connectedAt",
+          "grants"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The connection's agent client id; use it with PUT /api/agent-clients/{id}/grants"
+          },
+          "name": {
+            "type": "string",
+            "description": "The app's self-chosen name"
+          },
+          "redirectHosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "clientUri": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "connectedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastUsedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "revokedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "grants": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "workspaceId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "capability": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
       "ItemKind": {
         "type": "string",
         "enum": [
@@ -917,6 +1012,557 @@
     }
   },
   "paths": {
+    "/api/mcp": {
+      "post": {
+        "summary": "Hosted MCP server (stateless Streamable HTTP, JSON-RPC)",
+        "tags": [
+          "mcp"
+        ],
+        "security": [
+          {
+            "orbitOAuth": [
+              "orbit:read",
+              "orbit:capture"
+            ]
+          },
+          {
+            "orbitApiKey": []
+          }
+        ],
+        "description": "Tools: orbit_list_workspaces, orbit_list_notes, orbit_capture_note (same as the stdio adapter). Each tool call is authorized against the principal's grants and audited without content. Send Accept: application/json, text/event-stream.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "A JSON-RPC 2.0 message or batch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON-RPC response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Notification accepted"
+          },
+          "401": {
+            "description": "Missing or invalid credential",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer resource_metadata=\"<origin>/.well-known/oauth-protected-resource\", scope=\"orbit:read orbit:capture\" (plus error=\"invalid_token\" for a bad token)"
+              }
+            }
+          },
+          "503": {
+            "description": "Not configured (for example ORBIT_API_KEY_PEPPER)"
+          }
+        }
+      },
+      "get": {
+        "summary": "Not supported (no server-initiated stream)",
+        "tags": [
+          "mcp"
+        ],
+        "responses": {
+          "401": {
+            "description": "Missing credential"
+          },
+          "405": {
+            "description": "Method not allowed"
+          }
+        }
+      }
+    },
+    "/.well-known/oauth-protected-resource": {
+      "get": {
+        "summary": "RFC 9728 protected resource metadata for /api/mcp (also served at /.well-known/oauth-protected-resource/api/mcp)",
+        "tags": [
+          "oauth"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "resource": {
+                      "type": "string"
+                    },
+                    "authorization_servers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "scopes_supported": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "bearer_methods_supported": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/.well-known/oauth-authorization-server": {
+      "get": {
+        "summary": "RFC 8414 authorization server metadata",
+        "tags": [
+          "oauth"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Metadata: S256 PKCE, public clients, authorization_code and refresh_token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/oauth/register": {
+      "post": {
+        "summary": "RFC 7591 dynamic client registration (public clients)",
+        "tags": [
+          "oauth"
+        ],
+        "security": [],
+        "description": "redirect_uris: 1–5, https or http on localhost/127.0.0.1/[::1], exact match at authorize. token_endpoint_auth_method is always none. 10 registrations an hour per IP.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "redirect_uris"
+                ],
+                "properties": {
+                  "redirect_uris": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "client_name": {
+                    "type": "string"
+                  },
+                  "client_uri": {
+                    "type": "string"
+                  },
+                  "logo_uri": {
+                    "type": "string"
+                  },
+                  "grant_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "response_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "client_id",
+                    "redirect_uris",
+                    "token_endpoint_auth_method"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "OAuth error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited (Retry-After)"
+          }
+        }
+      }
+    },
+    "/oauth/authorize": {
+      "get": {
+        "summary": "Authorization endpoint: sign-in and consent page",
+        "tags": [
+          "oauth"
+        ],
+        "security": [],
+        "parameters": [
+          {
+            "name": "client_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "redirect_uri",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "response_type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code_challenge",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code_challenge_method",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "resource",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "description": "Unknown client or non-matching redirect_uri: an error page, no redirect. Other errors redirect with error, state and iss. Allow redirects with code, state and iss; Deny with error=access_denied.",
+        "responses": {
+          "200": {
+            "description": "Consent page (HTML)"
+          },
+          "303": {
+            "description": "Redirect to the app or to /login?next="
+          }
+        }
+      }
+    },
+    "/oauth/token": {
+      "post": {
+        "summary": "Token endpoint",
+        "tags": [
+          "oauth"
+        ],
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "grant_type",
+                  "client_id"
+                ],
+                "properties": {
+                  "grant_type": {
+                    "type": "string",
+                    "enum": [
+                      "authorization_code",
+                      "refresh_token"
+                    ]
+                  },
+                  "client_id": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "string"
+                  },
+                  "redirect_uri": {
+                    "type": "string"
+                  },
+                  "code_verifier": {
+                    "type": "string"
+                  },
+                  "refresh_token": {
+                    "type": "string"
+                  },
+                  "resource": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tokens (Cache-Control: no-store)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "access_token",
+                    "token_type",
+                    "expires_in",
+                    "refresh_token"
+                  ],
+                  "properties": {
+                    "access_token": {
+                      "type": "string"
+                    },
+                    "token_type": {
+                      "const": "Bearer"
+                    },
+                    "expires_in": {
+                      "type": "integer"
+                    },
+                    "refresh_token": {
+                      "type": "string"
+                    },
+                    "scope": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "OAuth error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "invalid_client",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/oauth/revoke": {
+      "post": {
+        "summary": "RFC 7009 token revocation",
+        "tags": [
+          "oauth"
+        ],
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string"
+                  },
+                  "token_type_hint": {
+                    "type": "string"
+                  },
+                  "client_id": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Revoked, or unknown (always 200)"
+          },
+          "400": {
+            "description": "OAuth error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/oauth/connections": {
+      "get": {
+        "summary": "Connected apps (OAuth connections) with their active grants",
+        "tags": [
+          "agent-clients"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Connections; never tokens or hashes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "connections"
+                  ],
+                  "properties": {
+                    "connections": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Connection"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Signed out"
+          }
+        }
+      }
+    },
+    "/api/oauth/connections/{id}/disconnect": {
+      "post": {
+        "summary": "Disconnect an app: revokes the connection, its grants and all its tokens",
+        "tags": [
+          "agent-clients"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Same-origin Origin header required. Applies on the app's next request. Idempotent.",
+        "responses": {
+          "200": {
+            "description": "Disconnected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "revokedAt": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Signed out"
+          },
+          "403": {
+            "description": "Cross-origin request"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/api/v1/workspaces": {
       "get": {
         "summary": "List the workspaces this credential can use",

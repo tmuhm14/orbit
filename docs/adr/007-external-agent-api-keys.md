@@ -4,7 +4,7 @@
 - **Date:** 2026-10-15
 - **Ticket:** A-05 (resolves ADR 004 open question 1; the plan's "auth ADR")
 - **Deciders:** Tony (Solutions Architect)
-- **Related:** ADR 004 (capability grants, the contract this implements), ADR 003 (`assignment.execute`), ADR 002 (revisioned writes); `docs/api/agents.md`, `docs/api/openapi.json`; plan "Connections and external agents"
+- **Related:** ADR 008 (hosted MCP and OAuth, which builds on these clients and grants), ADR 004 (capability grants, the contract this implements), ADR 003 (`assignment.execute`), ADR 002 (revisioned writes); `docs/api/agents.md`, `docs/api/openapi.json`; plan "Connections and external agents"
 
 ## Context
 
@@ -119,11 +119,11 @@ The UI offers Read (`workspace.read`) and Capture (`item.write {create}`) per sp
   - A-06 adds assignment operations under `assignment.execute`.
   - I-01 adds `external.*` and connection principals.
   - The built-in executor moves to `authorize()` with seeded `builtin_agent` grants.
-  - A hosted `/mcp` endpoint can add OAuth 2.1 later; keys remain for bots.
+  - A hosted `/mcp` endpoint can add OAuth 2.1 later; keys remain for bots. Done in [ADR 008](008-hosted-mcp-and-oauth.md): `/api/mcp` accepts these keys and Orbit-issued OAuth tokens.
 
 ## Alternatives considered
 
-- **OAuth 2.1 (hosted MCP):** the right long-term fit for third-party MCP clients, but it needs a hosted MCP endpoint and authorization server that Orbit doesn't have. Not chosen now; keys don't preclude it.
+- **OAuth 2.1 (hosted MCP):** the right long-term fit for third-party MCP clients, but it needs a hosted MCP endpoint and authorization server that Orbit doesn't have. Not chosen now; keys don't preclude it. Later added alongside keys by [ADR 008](008-hosted-mcp-and-oauth.md).
 - **Supabase JWTs with server-side grants:** these keep the PostgREST bypass (gap 2) and the expiry-bound revocation (gap 3). Rejected.
 - **bcrypt/argon2 key hashes:** these add CPU per request with no security gain for 256-bit random secrets. Rejected in favor of a peppered HMAC.
 - **Caching verification for a few seconds:** this would break "revocation applies on the next request". Rejected.
