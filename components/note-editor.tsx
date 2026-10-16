@@ -7,6 +7,7 @@ import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -32,6 +33,8 @@ import {
   CornerDownLeft,
   Hash,
   ArrowUpRight,
+  ArrowLeft,
+  Maximize2,
 } from "lucide-react";
 import {
   BUCKETS,
@@ -43,6 +46,7 @@ import {
   type Workspace,
 } from "@/lib/notes";
 import { KIND_LABELS, workspaceMoveError } from "@/lib/item-properties";
+import { isAgentResult } from "@/lib/projects-view";
 import { ConflictBanner, ReloadBanner } from "./conflict-banner";
 import {
   AssignmentField,
@@ -111,6 +115,13 @@ const commands = [
   },
 ];
 
+/**
+ * The item editor: title, properties, Tiptap content, autosave status and
+ * the conflict banner. `layout="dialog"` (default) is the modal over any
+ * page, with a focus trap, Escape to close and "Open full page".
+ * `layout="page"` is the same editor in the page flow (/items/[id]): no
+ * backdrop, trap or scroll lock; the close control goes back instead.
+ */
 export function NoteEditor({
   note,
   workspaces,
@@ -122,14 +133,20 @@ export function NoteEditor({
   onToast,
   onOpenSettings,
   onOpenAgent,
+  onOpenFullPage,
   storageError,
+  layout = "dialog",
 }: {
   note: Note;
   workspaces: Workspace[];
   /** Kinds, links, follow-ups, reminders and conflict recovery (useNotes). */
   api: ItemApi;
   onUpdate: (patch: Partial<Note>) => void;
+  /** Dialog: close. Page: leave the full page (back). */
   onClose: () => void;
+  /** Dialog only: show this item at /items/[id]. */
+  onOpenFullPage?: () => void;
+  layout?: "dialog" | "page";
   /** Deletes the note; a project with linked items asks first (Workspace). */
   onDelete: () => void;
   onOpenNote: (id: string) => void;
@@ -148,6 +165,8 @@ export function NoteEditor({
   const [tag, setTag] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [moveError, setMoveError] = useState<LinkErrorCode | null>(null);
+  const page = layout === "page";
+  const labelId = `${useId()}-label`;
   const conflict = api.conflictFor(note.id);
   const itemError = api.itemErrorFor(note.id);
   const kind = itemKind(note);
@@ -286,6 +305,8 @@ export function NoteEditor({
     }
     positionMenu();
     scroll.addEventListener("scroll", positionMenu, { passive: true });
+    // On the full page the document scrolls, not the editor.
+    window.addEventListener("scroll", positionMenu, { passive: true });
     window.addEventListener("resize", positionMenu);
     window.visualViewport?.addEventListener("resize", positionMenu);
     window.visualViewport?.addEventListener("scroll", positionMenu);
@@ -293,6 +314,7 @@ export function NoteEditor({
     observer.observe(scroll);
     return () => {
       scroll.removeEventListener("scroll", positionMenu);
+      window.removeEventListener("scroll", positionMenu);
       window.removeEventListener("resize", positionMenu);
       window.visualViewport?.removeEventListener("resize", positionMenu);
       window.visualViewport?.removeEventListener("scroll", positionMenu);
@@ -314,6 +336,11 @@ export function NoteEditor({
   }, [commandIndex, slash]);
 
   useEffect(() => {
+    // The full page starts at the title and leaves page scroll and Tab alone.
+    if (page) {
+      titleRef.current?.focus({ preventScroll: true });
+      return;
+    }
     const prior = document.activeElement as HTMLElement | null;
     titleRef.current?.focus();
     const oldOverflow = document.body.style.overflow;
@@ -321,7 +348,7 @@ export function NoteEditor({
     function trap(event: KeyboardEvent) {
       if (event.key !== "Tab") return;
       const elements = dialogRef.current?.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input, textarea, select, [contenteditable="true"], [tabindex="0"]',
+        'button:not([disabled]), a[href], input, textarea, select, [contenteditable="true"], [tabindex="0"]',
       );
       if (!elements?.length) return;
       const first = elements[0],
@@ -340,7 +367,7 @@ export function NoteEditor({
       document.removeEventListener("keydown", trap);
       prior?.focus();
     };
-  }, []);
+  }, [page]);
   const filtered = commands.filter((c) =>
     c.name.toLowerCase().includes(slash?.query.toLowerCase() || ""),
   );
@@ -350,28 +377,36 @@ export function NoteEditor({
       onUpdate({ tags: [...note.tags, value] });
     setTag("");
   }
-  return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
+  const editorBody = (
       <div
-        className="editor-dialog"
+        className={page ? "editor-dialog is-page" : "editor-dialog"}
         ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="note-dialog-label"
+        role={page ? undefined : "dialog"}
+        aria-modal={page ? undefined : "true"}
+        aria-labelledby={page ? undefined : labelId}
         onKeyDown={(e) => {
-          if (e.key === "Escape" && !slash) {
+          if (!page && e.key === "Escape" && !slash) {
             e.stopPropagation();
             onClose();
           }
         }}
       >
+        {page && (
+          <h1 className="sr-only">{note.title.trim() || "Untitled thought"}</h1>
+        )}
         <div className="editor-topbar">
-          <span id="note-dialog-label">
+          {page && (
+            <button
+              type="button"
+              className="icon-button editor-back"
+              onClick={onClose}
+              aria-label="Back"
+              title="Back"
+            >
+              <ArrowLeft size={18} />
+            </button>
+          )}
+          <span id={labelId}>
             YOUR SPACE / {KIND_LABELS[kind].toUpperCase()}
           </span>
           <span
@@ -390,13 +425,26 @@ export function NoteEditor({
                   ? "Not saved yet — retrying"
                   : "Synced to your account"}
           </span>
-          <button
-            className="icon-button"
-            onClick={onClose}
-            aria-label="Close note"
-          >
-            <X size={20} />
-          </button>
+          {!page && onOpenFullPage && (
+            <button
+              type="button"
+              className="icon-button"
+              onClick={onOpenFullPage}
+              aria-label="Open full page"
+              title="Open full page"
+            >
+              <Maximize2 size={16} />
+            </button>
+          )}
+          {!page && (
+            <button
+              className="icon-button"
+              onClick={onClose}
+              aria-label="Close note"
+            >
+              <X size={20} />
+            </button>
+          )}
         </div>
         {api.reloadRequired && <ReloadBanner compact />}
         {conflict && (
@@ -519,6 +567,12 @@ export function NoteEditor({
                       Email · {note.origin.from}
                     </span>
                   </div>
+                </>
+              )}
+              {isAgentResult(note) && (
+                <>
+                  <span>Source</span>
+                  <div className="note-source">Agent result</div>
                 </>
               )}
               <label htmlFor="note-due-date">Due date</label>
@@ -708,7 +762,8 @@ export function NoteEditor({
                         ? null
                         : new Date().toISOString(),
                     });
-                    if (!note.completedAt) onClose();
+                    // The dialog closes; the full page stays to show it's done.
+                    if (!note.completedAt && !page) onClose();
                   }}
                 >
                   <Check size={15} />
@@ -719,6 +774,16 @@ export function NoteEditor({
           </div>
         </div>
       </div>
+  );
+  if (page) return editorBody;
+  return (
+    <div
+      className="modal-backdrop"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      {editorBody}
     </div>
   );
 }

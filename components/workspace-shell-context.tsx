@@ -13,6 +13,8 @@ import type { BucketId, Note } from "@/lib/notes";
 import type { Assignment } from "@/lib/assignments/types";
 import type { QuickCaptureState } from "./use-quick-capture";
 import type { ItemActions } from "./use-item-actions";
+import type { ItemApi } from "./item-properties";
+import type { WorkspaceRoute } from "@/lib/workspace-routes";
 
 export const bucketIcons = {
   inbox: Inbox,
@@ -52,6 +54,20 @@ export type WorkspaceShellValue = {
   navigate: (next: View) => void;
   openNote: (id: string) => void;
   newNote: () => void;
+  /** The page from the pathname (lib/workspace-routes). */
+  route: WorkspaceRoute;
+  /** useNotes(): kinds, links, follow-ups, conflicts (for full-page editing). */
+  api: ItemApi;
+  /**
+   * Adds a new item in the current space and opens it in the editor.
+   * `fields` override createNote's defaults (e.g. kind, projectId, bucket);
+   * callers check links first (projectLinkError). Returns the new id.
+   */
+  createItem: (fields?: Partial<Note>) => string;
+  /** Closes the editor dialog and opens the item's full page (/items/[id]). */
+  openFullPage: (id: string) => void;
+  /** Browser back after an in-app navigation; otherwise `fallback` (a direct link). */
+  goBack: (fallback: string) => void;
   exportNotes: () => void;
   openGuide: () => void;
   showToast: (message: string) => void;

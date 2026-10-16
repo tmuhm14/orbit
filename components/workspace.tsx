@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   BUCKETS,
   createNote,
@@ -13,7 +13,12 @@ import {
   type Workspace as WorkspaceInfo,
 } from "@/lib/notes";
 import type { Assignment } from "@/lib/assignments/types";
+import { itemHref, parseNotesView, parseRoute } from "@/lib/workspace-routes";
 import { AgentsPage } from "./agents-page";
+import { ItemPage } from "./item-page";
+import { LibraryPage } from "./library-page";
+import { ProjectPage, ProjectsPage } from "./projects-page";
+import { TasksPage } from "./tasks-page";
 import { ConflictNotice, ReloadBanner } from "./conflict-banner";
 import { ScheduledAudit } from "./scheduled-audit";
 import { SettingsContent } from "./settings-content";
@@ -41,7 +46,10 @@ import { WorkspaceTopbar } from "./workspace-topbar";
 
 /**
  * App shell and state owner for the signed-in workspace. Renders the sidebar,
- * top bar, route content (notes views, settings, scheduled jobs) and dialogs.
+ * top bar, route content (notes views, Tasks, Projects, Library, full-page
+ * items, Agents, settings, scheduled jobs) and dialogs. Mounted once by
+ * app/(workspace)/layout.tsx, so it survives client navigation; the page
+ * comes from the pathname and the notes view from `?view=`.
  */
 export function Workspace({
   userId,
@@ -51,8 +59,6 @@ export function Workspace({
   initialSlack,
   inboundDomain,
   agentAvailable,
-  initialView = "overview",
-  initialSearchOpen = false,
 }: {
   userId: string;
   email: string;
@@ -61,16 +67,18 @@ export function Workspace({
   initialSlack: SlackConnection[];
   inboundDomain: string | null;
   agentAvailable: boolean;
-  initialView?: View;
-  initialSearchOpen?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const settingsPage = pathname === "/settings";
-  const scheduledPage = pathname === "/scheduled";
-  const agentsPage = pathname === "/agents";
+  const searchParams = useSearchParams();
+  const route = parseRoute(pathname);
+  const settingsPage = route.page === "settings";
+  const scheduledPage = route.page === "scheduled";
+  const agentsPage = route.page === "agents";
   // Pages other than the notes route (/): navigating to a view leaves them.
-  const otherPage = settingsPage || scheduledPage || agentsPage;
+  const otherPage = route.page !== "notes";
+  const viewParam = searchParams.get("view");
+  const [initialSearchOpen] = useState(() => searchParams.get("focus") === "search");
   const notesApi = useNotes(userId, initialNotes);
   const {
     notes,
@@ -90,7 +98,11 @@ export function Workspace({
   const sessionExpired = useSessionWatch(userId);
   const spaces = useWorkspaces(initialWorkspaces, initialSlack);
   const workspaceId = spaces.current.id;
-  const [view, setView] = useState<View>(initialView);
+  const [view, setView] = useState<View>(() => parseNotesView(viewParam));
+  // Arriving on / with ?view= (a link, or back/forward from another page).
+  useEffect(() => {
+    if (route.page === "notes" && viewParam) setView(parseNotesView(viewParam));
+  }, [route.page, viewParam]);
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [tagFilter, setTagFilter] = useState("");
@@ -136,6 +148,30 @@ export function Workspace({
       setSidebarOpen(false);
     },
   });
+  // A new page (link, back/forward): close the editor dialog left over from
+  // the last page and move focus to the new page's heading, unless the page
+  // already placed it (the full-page editor focuses its title). Filter
+  // changes keep the path, so they don't move focus.
+  const lastPath = useRef(pathname);
+  const navigated = useRef(false);
+  useEffect(() => {
+    if (lastPath.current === pathname) return;
+    lastPath.current = pathname;
+    navigated.current = true;
+    setSelected(null);
+    setSidebarOpen(false);
+    const frame = requestAnimationFrame(() => {
+      const main = document.querySelector<HTMLElement>(".main-shell main");
+      const active = document.activeElement;
+      // Leave focus alone when the page or a dialog (search) already took it.
+      if (!main || main.contains(active) || active?.closest('[role="dialog"], [role="alertdialog"]')) return;
+      const heading = main.querySelector<HTMLElement>("h1");
+      if (!heading) return;
+      if (!heading.hasAttribute("tabindex")) heading.tabIndex = -1;
+      heading.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [pathname]);
   async function importExistingNotes() {
     setToast(
       (await importBrowserNotes(workspaceId))
@@ -149,14 +185,18 @@ export function Workspace({
   const bucket = BUCKETS.find((b) => b.id === view);
   const currentNote = notes.find((n) => n.id === selected);
   function openSearch() {
-    if (otherPage) { router.push("/?focus=search"); return; }
+    // Results show on the notes route; the shell stays mounted, so open here.
+    if (otherPage) router.push("/");
     setSearchOpen(true);
     setTimeout(() => searchRef.current?.focus(), 0);
   }
   function switchWorkspace(id: string) {
     spaces.select(id);
-    // The Agents page shows the new space's work; settings and jobs stay put.
+    // List pages show the new space's work; settings and jobs stay put. An
+    // item or project belongs to the old space, so go to its list instead.
     if (!otherPage) navigate("overview");
+    else if (route.page === "project") router.push("/projects");
+    else if (route.page === "item") router.push("/library");
   }
   const notesPerWorkspace = Object.fromEntries(
     spaces.workspaces.map((w) => [
@@ -213,33 +253,56 @@ export function Workspace({
     setNotes((n) => [note, ...n]);
     setSelected(note.id);
   }
-  function updateNote(patch: Partial<Note>) {
+  /** A new item, opened in the editor. Fields override createNote's defaults. */
+  function createItem(fields: Partial<Note> = {}) {
+    const note = { ...createNote("", bucket?.id || "inbox", workspaceId), ...fields };
+    setNotes((n) => [note, ...n]);
+    setSelected(note.id);
+    return note.id;
+  }
+  function updateNoteById(id: string, patch: Partial<Note>) {
     setNotes((n) =>
       n.map((item) =>
-        item.id === selected
+        item.id === id
           ? { ...item, ...patch, updatedAt: new Date().toISOString() }
           : item,
       ),
     );
   }
-  function deleteSelected() {
-    const id = selected;
-    if (!id) return;
+  function updateNote(patch: Partial<Note>) {
+    if (selected) updateNoteById(selected, patch);
+  }
+  /** Leaves a full page or project detail whose item no longer exists. */
+  function leaveDeleted(id: string, project: boolean) {
+    if ((route.page === "item" || route.page === "project") && route.id === id)
+      router.push(project ? "/projects" : "/library");
+  }
+  function deleteItem(id: string) {
     const note = notes.find((n) => n.id === id);
-    const linked = note && itemKind(note) === "project" ? notesApi.childrenOf(id).length : 0;
+    const project = !!note && itemKind(note) === "project";
+    const linked = project ? notesApi.childrenOf(id).length : 0;
     if (linked) {
       setLocalProjectDelete({ id, count: linked });
       return;
     }
     notesApi.deleteNote(id);
-    setSelected(null);
-    setToast("Note deleted");
+    if (selected === id) setSelected(null);
+    setToast(project ? "Project deleted" : "Note deleted");
+    leaveDeleted(id, project);
+  }
+  function deleteSelected() {
+    if (selected) deleteItem(selected);
   }
   function confirmProjectDelete(id: string) {
     setLocalProjectDelete(null);
     notesApi.deleteNote(id, { unlinkChildren: true });
     if (selected === id) setSelected(null);
     setToast("Project deleted. Its items moved up a level.");
+    leaveDeleted(id, true);
+  }
+  function openFullPage(id: string) {
+    setSelected(null);
+    router.push(itemHref(id));
   }
   function cancelProjectDelete(id: string) {
     if (localProjectDelete?.id === id) setLocalProjectDelete(null);
@@ -282,6 +345,14 @@ export function Workspace({
     navigate,
     openNote: setSelected,
     newNote,
+    route,
+    api: notesApi,
+    createItem,
+    openFullPage,
+    goBack: (fallback) => {
+      if (navigated.current) router.back();
+      else router.push(fallback);
+    },
     exportNotes,
     openGuide: () => dialogs.setGuideOpen(true),
     showToast: setToast,
@@ -312,7 +383,9 @@ export function Workspace({
       </div>
     );
   const covered = !!currentNote || dialogs.anyOpen || !!projectDelete;
-  const closedConflicts = conflicts.filter((c) => c.id !== selected);
+  // A conflict shows in the open editor (dialog or full page) instead.
+  const pageItemId = route.page === "item" ? route.id : null;
+  const closedConflicts = conflicts.filter((c) => c.id !== selected && c.id !== pageItemId);
   return (
     <WorkspaceShellProvider value={shell}>
       <div
@@ -350,7 +423,16 @@ export function Workspace({
               />
             </div>
           )}
-          {agentsPage ? <AgentsPage /> : scheduledPage ? <ScheduledAudit onOpenScheduled={() => dialogs.setScheduledOpen(true)} refreshToken={dialogs.scheduledRefreshToken} /> : settingsPage ? <SettingsContent
+          {route.page === "tasks" ? <TasksPage /> : route.page === "projects" ? <ProjectsPage /> : route.page === "project" ? <ProjectPage key={route.id} id={route.id} /> : route.page === "library" ? <LibraryPage /> : route.page === "item" ? <ItemPage
+            key={route.id}
+            id={route.id}
+            workspaces={spaces.workspaces}
+            storageError={storageError}
+            onUpdate={(patch) => updateNoteById(route.id, patch)}
+            onDelete={() => deleteItem(route.id)}
+            onToast={setToast}
+            onOpenAgent={() => dialogs.setAgentOpen(true)}
+          /> : agentsPage ? <AgentsPage /> : scheduledPage ? <ScheduledAudit onOpenScheduled={() => dialogs.setScheduledOpen(true)} refreshToken={dialogs.scheduledRefreshToken} /> : settingsPage ? <SettingsContent
             email={email}
             workspaces={spaces.workspaces}
             slack={spaces.slack}
@@ -392,6 +474,7 @@ export function Workspace({
           onUpdateNote={updateNote}
           onDeleteNote={deleteSelected}
           onCloseNote={() => setSelected(null)}
+          onOpenFullPage={openFullPage}
           onToggleAgent={(enabled) => spaces.setAgentEnabled(workspaceId, enabled)}
           onAgentNotesChanged={() => void refresh()}
           onAssignmentChange={assignmentChanged}

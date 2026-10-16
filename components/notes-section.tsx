@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { BUCKETS, type BucketId, type Note } from "@/lib/notes";
+import { matchesText } from "@/lib/note-search";
 import { bucketIcons, useWorkspaceShell, type View } from "./workspace-shell-context";
 
 type Sort = "newest" | "oldest" | "title";
@@ -31,13 +32,8 @@ function visibleNotes(
           : view === "completed"
             ? !!n.completedAt
             : n.bucket === view && !n.completedAt;
-      const matchesText =
-        !search ||
-        `${n.title} ${n.plainText} ${n.tags.join(" ")}`
-          .toLowerCase()
-          .includes(search.toLowerCase());
       return (
-        matchesView && matchesText && (!tagFilter || n.tags.includes(tagFilter))
+        matchesView && matchesText(n, search) && (!tagFilter || n.tags.includes(tagFilter))
       );
     })
     .sort((a, b) =>
