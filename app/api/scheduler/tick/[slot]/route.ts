@@ -16,6 +16,10 @@ const PURGE_SLOT = "03";
 // expired assignment leases and reconciles queued assignments with their
 // jobs, so this tick no longer does either.
 
+// Access audit events (ADR 004 §5, ADR 007) are kept 90 days. Purged once a
+// day from this one slot; repeating it is harmless.
+const AUDIT_PURGE_SLOT = "05";
+
 async function purgeAgentActionValues(admin: NonNullable<ReturnType<typeof createAdminClient>>) {
   try {
     const { data, error } = await admin.rpc("purge_agent_action_values");
@@ -24,6 +28,18 @@ async function purgeAgentActionValues(admin: NonNullable<ReturnType<typeof creat
   } catch {
     // Counts only; never ids or content.
     console.error("agent action purge failed");
+    return null;
+  }
+}
+
+async function purgeAccessAuditEvents(admin: NonNullable<ReturnType<typeof createAdminClient>>) {
+  try {
+    const { data, error } = await admin.rpc("purge_access_audit_events");
+    if (error) throw new Error("purge failed");
+    return Number(data) || 0;
+  } catch {
+    // Counts only.
+    console.error("access audit purge failed");
     return null;
   }
 }
@@ -41,6 +57,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slot
   const admin = createAdminClient();
   if (!admin) return new Response("Unavailable", { status: 503 });
   const purged = slot === PURGE_SLOT ? await purgeAgentActionValues(admin) : undefined;
+  const auditPurged = slot === AUDIT_PURGE_SLOT ? await purgeAccessAuditEvents(admin) : undefined;
   const { data: tasks, error } = await admin.from("scheduled_tasks")
     .select("id,user_id,name,kind,enabled,timezone,delivery_hour,cadence,jira_projects,github_repos,created_at")
     .eq("enabled", true).returns<ScheduledTask[]>();
@@ -60,5 +77,6 @@ export async function GET(request: Request, { params }: { params: Promise<{ slot
     completed,
     failed,
     ...(purged !== undefined ? { purged } : {}),
+    ...(auditPurged !== undefined ? { auditPurged } : {}),
   });
 }

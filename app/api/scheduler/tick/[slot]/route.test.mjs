@@ -59,7 +59,29 @@ test("a failed purge does not stop the tick, and unauthorized ticks do nothing",
 test("no tick reaps or recovers assignments any more (the jobs worker does, every minute)", async () => {
   const bodies = [];
   for (let hour = 0; hour < 24; hour++) bodies.push((await tick(String(hour).padStart(2, "0"))).body);
-  assert.deepEqual(rpcCalls.filter((n) => n !== "purge_agent_action_values"), []);
+  assert.deepEqual(rpcCalls.filter((n) => n !== "purge_agent_action_values" && n !== "purge_access_audit_events"), []);
   assert.ok(bodies.every((b) => !("reaped" in b)));
 });
 
+
+// Access audit retention (ADR 007): 90 days, purged from slot 05 only.
+test("purges access audit events once a day, from slot 05 only", async () => {
+  const bodies = [];
+  for (let hour = 0; hour < 24; hour++) bodies.push((await tick(String(hour).padStart(2, "0"))).body);
+  assert.deepEqual(rpcCalls.filter((n) => n === "purge_access_audit_events"), ["purge_access_audit_events"]);
+  assert.deepEqual(bodies[5], { completed: 0, failed: 0, auditPurged: 2 });
+  assert.ok(bodies.every((b, hour) => hour === 5 || b.auditPurged === undefined));
+});
+
+test("a failed audit purge does not stop the tick and logs no detail", async () => {
+  rpcResult = { data: null, error: { message: "boom" } };
+  const errors = [];
+  const original = console.error;
+  console.error = (...args) => errors.push(args);
+  try {
+    assert.deepEqual(await tick("05"), { status: 200, body: { completed: 0, failed: 0, auditPurged: null } });
+  } finally {
+    console.error = original;
+  }
+  assert.deepEqual(errors, [["access audit purge failed"]]);
+});
