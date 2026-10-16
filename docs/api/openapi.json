@@ -2,19 +2,30 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Orbit Agent API",
-    "version": "1.4.0"
+    "version": "1.5.0",
+    "description": "External agents authenticate /api/v1 with an Orbit API key (orbitApiKey) created in Settings → Agents & API keys and scoped by capability grants (ADR 004, ADR 007). Supabase user access tokens (bearerAuth) are deprecated: they are accepted until the sunset date with Deprecation and Sunset response headers, then refused with 401 credential_type_unsupported. Browser routes use cookieSession."
   },
   "security": [
+    {
+      "orbitApiKey": []
+    },
     {
       "bearerAuth": []
     }
   ],
   "components": {
     "securitySchemes": {
+      "orbitApiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "orbit_sk_<prefix>_<secret>",
+        "description": "Per-agent Orbit API key. Shown once at creation; Orbit stores only the prefix and an HMAC. Checked with its grants on every request, so revocation applies to the next call."
+      },
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer",
-        "bearerFormat": "Supabase user JWT"
+        "bearerFormat": "Supabase user JWT",
+        "description": "Deprecated. A Supabase user access token, accepted on /api/v1 until the sunset date (ORBIT_USER_TOKEN_SUNSET, default 2026-11-19) with today's access: workspace.read and item.write {create} in agent-enabled workspaces."
       },
       "cookieSession": {
         "type": "apiKey",
@@ -777,50 +788,217 @@
             "format": "date"
           }
         }
+      },
+      "Capability": {
+        "type": "string",
+        "enum": [
+          "workspace.read",
+          "item.write",
+          "assignment.execute"
+        ],
+        "description": "item.write is create-only in v1. assignment.execute is defined for A-06 and not yet used by /api/v1."
+      },
+      "IntegrationError": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "invalid_credentials",
+              "client_revoked",
+              "credential_type_unsupported",
+              "capability_denied",
+              "agent_disabled",
+              "not_configured",
+              "unavailable"
+            ]
+          },
+          "capability": {
+            "$ref": "#/components/schemas/Capability"
+          }
+        }
+      },
+      "AgentClient": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "keyPrefix",
+          "createdAt",
+          "lastUsedAt",
+          "revokedAt",
+          "grants"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "keyPrefix": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{12}$"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastUsedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "revokedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "grants": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "workspaceId",
+                "capability"
+              ],
+              "properties": {
+                "workspaceId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "capability": {
+                  "$ref": "#/components/schemas/Capability"
+                },
+                "constraints": {
+                  "type": "object"
+                },
+                "grantedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          }
+        }
+      },
+      "GrantInput": {
+        "type": "array",
+        "maxItems": 300,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "workspaceId",
+            "capability"
+          ],
+          "properties": {
+            "workspaceId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "capability": {
+              "$ref": "#/components/schemas/Capability"
+            }
+          }
+        }
       }
     }
   },
   "paths": {
     "/api/v1/workspaces": {
       "get": {
-        "summary": "List agent-enabled workspaces",
+        "summary": "List the workspaces this credential can use",
         "responses": {
           "200": {
             "description": "Success",
-            "content": {
-              "application/json": {
+            "headers": {
+              "Deprecation": {
+                "description": "Only for deprecated Supabase user tokens (RFC 9745), e.g. @1792454400.",
                 "schema": {
-                  "type": "object"
+                  "type": "string"
+                }
+              },
+              "Sunset": {
+                "description": "Only for deprecated Supabase user tokens (RFC 8594): when they stop being accepted.",
+                "schema": {
+                  "type": "string"
                 }
               }
-            }
-          },
-          "400": {
-            "description": "Invalid input",
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "type": "object",
+                  "required": [
+                    "workspaces"
+                  ],
+                  "properties": {
+                    "workspaces": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "name",
+                          "color",
+                          "capabilities"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "color": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "capabilities": {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/components/schemas/Capability"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
           },
           "401": {
-            "description": "Invalid token",
+            "description": "invalid_credentials (missing, malformed, unknown or expired), client_revoked, or credential_type_unsupported (user token after the sunset)",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/IntegrationError"
                 }
               }
             }
           },
           "403": {
-            "description": "Workspace access denied",
+            "description": "capability_denied (no grant for this capability in this workspace; body includes capability) or agent_disabled (kill switch off)",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/IntegrationError"
                 }
               }
             }
@@ -830,27 +1008,28 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/IntegrationError"
                 }
               }
             }
           },
           "503": {
-            "description": "Not configured",
+            "description": "not_configured (for example ORBIT_API_KEY_PEPPER missing)",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/IntegrationError"
                 }
               }
             }
           }
-        }
+        },
+        "description": "API keys: workspaces with at least one active grant whose agent switch is on. Deprecated user tokens: every agent-enabled workspace."
       }
     },
     "/api/v1/notes": {
       "get": {
-        "summary": "List notes in an agent-enabled workspace",
+        "summary": "List notes in a workspace (needs workspace.read)",
         "responses": {
           "200": {
             "description": "Success",
@@ -879,6 +1058,20 @@
                   }
                 }
               }
+            },
+            "headers": {
+              "Deprecation": {
+                "description": "Only for deprecated Supabase user tokens (RFC 9745), e.g. @1792454400.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Sunset": {
+                "description": "Only for deprecated Supabase user tokens (RFC 8594): when they stop being accepted.",
+                "schema": {
+                  "type": "string"
+                }
+              }
             }
           },
           "400": {
@@ -892,21 +1085,21 @@
             }
           },
           "401": {
-            "description": "Invalid token",
+            "description": "invalid_credentials (missing, malformed, unknown or expired), client_revoked, or credential_type_unsupported (user token after the sunset)",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/IntegrationError"
                 }
               }
             }
           },
           "403": {
-            "description": "Workspace access denied",
+            "description": "capability_denied (no grant for this capability in this workspace; body includes capability) or agent_disabled (kill switch off)",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/IntegrationError"
                 }
               }
             }
@@ -916,17 +1109,17 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/IntegrationError"
                 }
               }
             }
           },
           "503": {
-            "description": "Not configured",
+            "description": "not_configured (for example ORBIT_API_KEY_PEPPER missing)",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/IntegrationError"
                 }
               }
             }
@@ -976,7 +1169,7 @@
         ]
       },
       "post": {
-        "summary": "Capture an Inbox note",
+        "summary": "Capture an Inbox note (needs item.write {create})",
         "responses": {
           "201": {
             "description": "Created. Returns id, workspaceId, bucket and revision (always 1 for a new note).",
@@ -984,6 +1177,20 @@
               "application/json": {
                 "schema": {
                   "type": "object"
+                }
+              }
+            },
+            "headers": {
+              "Deprecation": {
+                "description": "Only for deprecated Supabase user tokens (RFC 9745), e.g. @1792454400.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Sunset": {
+                "description": "Only for deprecated Supabase user tokens (RFC 8594): when they stop being accepted.",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -999,21 +1206,21 @@
             }
           },
           "401": {
-            "description": "Invalid token",
+            "description": "invalid_credentials (missing, malformed, unknown or expired), client_revoked, or credential_type_unsupported (user token after the sunset)",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/IntegrationError"
                 }
               }
             }
           },
           "403": {
-            "description": "Workspace access denied",
+            "description": "capability_denied (no grant for this capability in this workspace; body includes capability) or agent_disabled (kill switch off)",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/IntegrationError"
                 }
               }
             }
@@ -1023,17 +1230,17 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/IntegrationError"
                 }
               }
             }
           },
           "503": {
-            "description": "Not configured",
+            "description": "not_configured (for example ORBIT_API_KEY_PEPPER missing)",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/IntegrationError"
                 }
               }
             }
@@ -2472,6 +2679,384 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/agent-clients": {
+      "get": {
+        "summary": "List agent clients (API keys) and their active grants",
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "tags": [
+          "agent-clients"
+        ],
+        "responses": {
+          "200": {
+            "description": "Newest first. Never includes a key or its hash.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "clients": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AgentClient"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Signed out"
+          },
+          "500": {
+            "description": "Storage error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create an agent client and its API key",
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "tags": [
+          "agent-clients"
+        ],
+        "description": "Same-origin Origin header required. The full key is in this response only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "grants": {
+                    "$ref": "#/components/schemas/GrantInput"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "client",
+                    "apiKey"
+                  ],
+                  "properties": {
+                    "client": {
+                      "$ref": "#/components/schemas/AgentClient"
+                    },
+                    "apiKey": {
+                      "type": "string",
+                      "pattern": "^orbit_sk_[0-9a-f]{12}_[A-Za-z0-9_-]{43}$"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid name or grants"
+          },
+          "401": {
+            "description": "Signed out"
+          },
+          "403": {
+            "description": "Cross-origin request"
+          },
+          "404": {
+            "description": "A granted workspace is not yours"
+          },
+          "409": {
+            "description": "limit_reached (25 active keys)"
+          },
+          "500": {
+            "description": "Storage error"
+          },
+          "503": {
+            "description": "ORBIT_API_KEY_PEPPER not configured"
+          }
+        }
+      }
+    },
+    "/api/agent-clients/{id}/grants": {
+      "put": {
+        "summary": "Replace an agent client's grants",
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "tags": [
+          "agent-clients"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Same-origin Origin header required. Applies to the key's next request.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "grants"
+                ],
+                "properties": {
+                  "grants": {
+                    "$ref": "#/components/schemas/GrantInput"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "client"
+                  ],
+                  "properties": {
+                    "client": {
+                      "$ref": "#/components/schemas/AgentClient"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid grants"
+          },
+          "401": {
+            "description": "Signed out"
+          },
+          "403": {
+            "description": "Cross-origin request"
+          },
+          "404": {
+            "description": "Client or workspace not found"
+          },
+          "409": {
+            "description": "client_revoked"
+          },
+          "500": {
+            "description": "Storage error"
+          }
+        }
+      }
+    },
+    "/api/agent-clients/{id}/revoke": {
+      "post": {
+        "summary": "Revoke an agent client and all its grants",
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "tags": [
+          "agent-clients"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Same-origin Origin header required. The key is refused from its next request. Idempotent.",
+        "responses": {
+          "200": {
+            "description": "Revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "client"
+                  ],
+                  "properties": {
+                    "client": {
+                      "$ref": "#/components/schemas/AgentClient"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Signed out"
+          },
+          "403": {
+            "description": "Cross-origin request"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "500": {
+            "description": "Storage error"
+          }
+        }
+      }
+    },
+    "/api/agent-clients/access-log": {
+      "get": {
+        "summary": "Recent content-free access audit events",
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "tags": [
+          "agent-clients"
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Newest first; kept 90 days",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "integer"
+                          },
+                          "principalType": {
+                            "type": "string",
+                            "enum": [
+                              "agent_client",
+                              "user_token"
+                            ]
+                          },
+                          "clientId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "uuid"
+                          },
+                          "operation": {
+                            "type": "string",
+                            "enum": [
+                              "workspace.list",
+                              "item.read",
+                              "item.create"
+                            ]
+                          },
+                          "workspaceId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "uuid"
+                          },
+                          "resourceId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "uuid"
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "allowed",
+                              "denied"
+                            ]
+                          },
+                          "code": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "enum": [
+                              "capability_denied",
+                              "agent_disabled",
+                              "client_revoked",
+                              null
+                            ]
+                          },
+                          "occurredAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid limit"
+          },
+          "401": {
+            "description": "Signed out"
+          },
+          "500": {
+            "description": "Storage error"
           }
         }
       }

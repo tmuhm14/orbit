@@ -157,7 +157,7 @@ A-05 migration seeds grants so behavior is unchanged on day one:
 
 ## Open questions
 
-1. **External agent credential type:** Orbit-issued API keys (hashed, revocable), OAuth 2.1 (hosted MCP), or Supabase JWTs with server-side grants. *Decider: Tony. Blocks: A-05 ("auth ADR" in the plan should be a follow-up ADR once chosen).*
+1. ~~**External agent credential type:** Orbit-issued API keys (hashed, revocable), OAuth 2.1 (hosted MCP), or Supabase JWTs with server-side grants.~~ **Resolved — decided by Tony, 2026-10-15:** Orbit-issued per-agent API keys. See [ADR 007](007-external-agent-api-keys.md).
 2. **Deprecation window** for user-JWT `/api/v1` access. *Decider: Tony.*
 3. **Retention for `access_audit_events`.** Proposed: 90 days. *Decider: Tony.*
 4. **Should `item.write {update}` be grantable to external agents in v1** (it needs the ADR 002 expected-revision contract on a new v1 endpoint)? *Decider: Tony.*

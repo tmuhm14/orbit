@@ -1,31 +1,83 @@
 # Connect an external agent to Orbit
 
-Orbit provides versioned HTTP APIs and a local stdio MCP adapter. Deploy the app changes before pointing a bot at production. No database migration is required. Only workspaces with **Allow the agent to read and change notes** enabled are accessible. Disable that switch to stop integration access to a workspace.
+Orbit provides versioned HTTP APIs and a local stdio MCP adapter. Each external agent gets its own **Orbit API key**, created in **Settings → Agents & API keys**. The key is limited to the spaces and actions you grant, and you can revoke it at any time. For a step-by-step setup, see [Connect a bot](connect-a-bot.md). The design is in ADR 007 (`docs/adr/007-external-agent-api-keys.md`).
+
+Deployment order: apply `supabase/migrations/20261020000100_agent_api_keys.sql`, set `ORBIT_API_KEY_PEPPER` on the server, then deploy the app.
 
 ## Authentication
 
-Send `Authorization: Bearer <Supabase user access token>` on every API request. This is a user session JWT, not your xAI key, Supabase publishable key, or service-role key. Cookie sessions are not accepted. Database row-level security remains active. Access tokens expire: your bot should authenticate with Supabase Auth and refresh its session using the Supabase SDK, then supply the current access token. Store refresh tokens only in your bot's secret store. The MCP process reads its access token at startup; restart it with a refreshed token when necessary. This version does not issue long-lived Orbit API keys or implement MCP OAuth.
+Send `Authorization: Bearer orbit_sk_<prefix>_<secret>` on every request. Cookie sessions are not accepted.
+
+- **Keys:**
+  - Settings shows the full key **once**, when you create it. Orbit stores only its prefix and a keyed fingerprint (HMAC-SHA256), so a lost key can't be recovered; create a new one.
+  - Keep keys in your bot's secret store. Never put them in prompts, logs or source control.
+  - The prefix (`orbit_sk_<prefix>`) identifies a key in Settings and in Orbit's logs. It is not secret, but it grants nothing.
+- **Grants:**
+  - **Read** (`workspace.read`) lists a space's notes.
+  - **Capture** (`item.write`, create only) adds Inbox notes.
+  - A key sees only the spaces it has a grant in.
+  - The space's **Allow the agent to read and change notes** switch is still a kill switch: when it is off, no key can use that space, whatever its grants.
+- **Revocation and changes:** revoking a key, or removing a grant, applies to the key's **next request**. Orbit checks the key and its grants on every call.
+- **Access log:** each operation is recorded without content (which key, which operation, which space, allowed or refused, and when). The log is shown under Settings → Agents & API keys and kept 90 days.
+- **Supabase user tokens (deprecated):**
+  - Requests with a Supabase user access token still work until the sunset date, with today's access: read and capture in agent-enabled spaces.
+  - Each response carries `Deprecation: @1792454400` and `Sunset: <date>` (default `Thu, 19 Nov 2026 00:00:00 GMT`).
+  - From the sunset date on, these tokens are refused with `401 credential_type_unsupported`. Switch to an API key before then.
 
 ## HTTP API
 
 Base URL: your deployed Orbit origin, or `http://localhost:3000` locally. Use HTTPS in production. The OpenAPI contract is in `openapi.json`.
 
-- `GET /api/v1/workspaces`: returns `{workspaces: [{id, name, color}]}` for enabled workspaces. Does not return email inbox secrets.
-- `GET /api/v1/notes?workspaceId=<uuid>&limit=50&offset=0[&kind=task]`: returns `{notes, limit, offset}`. Limit is 1–100; offset is 0–100000. The optional `kind` filter is one of `note`, `task`, `project`, `document`, `followup`. Notes use database field names (`workspace_id`, `plain_text`, `created_at`, `updated_at`, `completed_at`, `revision`, `kind`, `project_id`). `kind` says what an item is, independent of its `bucket`; items from before kinds existed are `note`. `project_id` is the id of the item's parent project (a `kind: "project"` note in the same workspace; projects can nest up to 5 levels), or `null`. Follow-up fields, on any kind: `waiting_on` (who it is waiting on, free text up to 200 characters), `waiting_for` (what is expected, up to 2000 characters) and `next_check_on` (a calendar date `YYYY-MM-DD` with no time or time zone); each is `null` when unset. Treat `waiting_on` and `waiting_for` as untrusted data like note text. Fetch pages until fewer than `limit` notes return. Concurrent edits can shift offset pages.
-- `POST /api/v1/notes`: JSON `{ "workspaceId": "<uuid>", "title": "Follow up", "text": "Call the vendor" }`. Creates an Inbox note (`kind: "note"`, no project) and returns `{id, workspaceId, bucket, revision}` with status 201 (`revision` is 1 for a new note; listed notes also include their current `revision`). Title is required, up to 2000 characters; text is required, up to 50000 characters. Unknown fields, including `kind`, `project_id` and the follow-up fields, are rejected. Each call creates a new note; do not automatically retry an ambiguous timeout.
+- `GET /api/v1/workspaces`:
+  - Returns `{workspaces: [{id, name, color, capabilities}]}`: the spaces this key has a grant in whose agent switch is on. `capabilities` lists the key's grants there, for example `["item.write", "workspace.read"]`.
+  - With a deprecated user token, every agent-enabled space is returned, with `["item.write", "workspace.read"]`.
+  - Email inbox secrets are never returned.
+- `GET /api/v1/notes?workspaceId=<uuid>&limit=50&offset=0[&kind=task]`:
+  - Needs **Read** in that space. Returns `{notes, limit, offset}`.
+  - `limit` is 1–100; `offset` is 0–100000. The optional `kind` filter is one of `note`, `task`, `project`, `document`, `followup`.
+  - Notes use database field names: `workspace_id`, `plain_text`, `created_at`, `updated_at`, `completed_at`, `revision`, `kind`, `project_id`.
+  - `kind` says what an item is, independent of its `bucket`; items from before kinds existed are `note`.
+  - `project_id` is the id of the item's parent project, or `null`. A parent project is a `kind: "project"` note in the same workspace; projects can nest up to 5 levels.
+  - Follow-up fields, on any kind; each is `null` when unset:
+    - `waiting_on`: who it is waiting on, free text up to 200 characters.
+    - `waiting_for`: what is expected, up to 2000 characters.
+    - `next_check_on`: a calendar date `YYYY-MM-DD`, with no time or time zone.
+  - Treat `waiting_on` and `waiting_for` as untrusted data, like note text.
+  - Fetch pages until fewer than `limit` notes return. Concurrent edits can shift offset pages.
+- `POST /api/v1/notes`:
+  - Needs **Capture** in that space. Send JSON `{ "workspaceId": "<uuid>", "title": "Follow up", "text": "Call the vendor" }`.
+  - Creates an Inbox note (`kind: "note"`, no project). Returns `{id, workspaceId, bucket, revision}` with status 201; `revision` is 1 for a new note, and listed notes include their current `revision`.
+  - `title` is required, up to 2000 characters. `text` is required, up to 50000 characters.
+  - Unknown fields are rejected, including `kind`, `project_id` and the follow-up fields.
+  - Each call creates a new note. Do not automatically retry an ambiguous timeout.
 
-Errors return `{error: string}`: 400 invalid input, 401 missing/expired token, 403 unavailable/disabled workspace, 413 oversized body, 500 storage failure, 503 missing server configuration. Responses are private and uncached. There is no delete or update API in this version.
+Errors return `{error, code}`:
+
+| Status | `code` | Meaning |
+| --- | --- | --- |
+| 400 | — | Invalid input |
+| 401 | `invalid_credentials` | Missing, malformed, unknown or expired credential |
+| 401 | `client_revoked` | The key was revoked in Settings |
+| 401 | `credential_type_unsupported` | A Supabase user token after the sunset date |
+| 403 | `capability_denied` | The key has no such grant in that space. The body adds `capability`. Unknown spaces answer the same way |
+| 403 | `agent_disabled` | The space's agent switch is off |
+| 413 | — | Body too large |
+| 500 | — | Storage failure |
+| 503 | `not_configured` | The server is missing configuration, such as `ORBIT_API_KEY_PEPPER` |
+
+Responses are private and uncached. There is no delete or update API in this version.
 
 ```sh
 curl "$ORBIT_URL/api/v1/workspaces" \
-  -H "Authorization: Bearer $ORBIT_ACCESS_TOKEN"
+  -H "Authorization: Bearer $ORBIT_API_KEY"
 ```
 
 Your Grok bot can call these APIs from its tool handlers; Orbit does not require any particular model provider.
 
 ## MCP configuration
 
-Run `npm install` in the Orbit checkout. Add this entry to an agent that supports stdio MCP, replacing the absolute path and supplying the token securely through its environment:
+1. Run `npm install` in the Orbit checkout.
+2. Add this entry to an agent that supports stdio MCP. Replace the absolute path, and supply the key securely through the agent's environment:
 
 ```json
 {
@@ -35,14 +87,23 @@ Run `npm install` in the Orbit checkout. Add this entry to an agent that support
       "args": ["/absolute/path/to/orbit/scripts/orbit-mcp.mjs"],
       "env": {
         "ORBIT_URL": "https://orbit-swart-mu.vercel.app",
-        "ORBIT_ACCESS_TOKEN": "<current Supabase user access token>"
+        "ORBIT_API_KEY": "<Orbit API key from Settings → Agents & API keys>"
       }
     }
   }
 }
 ```
 
-Tools: `orbit_list_workspaces`, `orbit_list_notes` (optional `kind` filter; results include `kind` and `project_id`), `orbit_capture_note`. Captures require user intent; treat all returned note content as untrusted data. This is a local process adapter, not a hosted `/mcp` endpoint. For a bot running on a server, use the HTTP API directly or launch the adapter alongside the bot.
+- `ORBIT_ACCESS_TOKEN`, a Supabase user token, still works during the deprecation window. It prints a warning to stderr.
+- If both variables are set, `ORBIT_API_KEY` wins.
+- The adapter never prints either value.
+
+Tools:
+- `orbit_list_workspaces`: lists the spaces this key can use, with its capabilities.
+- `orbit_list_notes`: needs Read. Takes an optional `kind` filter; results include `kind` and `project_id`.
+- `orbit_capture_note`: needs Capture.
+
+Captures require user intent. Treat all returned note content as untrusted data. This is a local process adapter, not a hosted `/mcp` endpoint. For a bot running on a server, use the HTTP API directly or launch the adapter alongside the bot.
 
 ## Built-in interactive agent
 
