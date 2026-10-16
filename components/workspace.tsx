@@ -14,6 +14,7 @@ import {
 } from "@/lib/notes";
 import type { Assignment } from "@/lib/assignments/types";
 import { itemHref, parseNotesView, parseRoute } from "@/lib/workspace-routes";
+import { settingsHref } from "@/lib/settings-sections";
 import { AgentsPage } from "./agents-page";
 import { ItemPage } from "./item-page";
 import { LibraryPage } from "./library-page";
@@ -368,7 +369,8 @@ export function Workspace({
     openSettings: () => {
       setSelected(null);
       dialogs.setAssignmentId(null);
-      router.push("/settings");
+      // Every caller is a "save a model key" link.
+      router.push(settingsHref("model"));
     },
     openAgentDialog: () => {
       setSelected(null);
@@ -432,7 +434,8 @@ export function Workspace({
             onDelete={() => deleteItem(route.id)}
             onToast={setToast}
             onOpenAgent={() => dialogs.setAgentOpen(true)}
-          /> : agentsPage ? <AgentsPage /> : scheduledPage ? <ScheduledAudit onOpenScheduled={() => dialogs.setScheduledOpen(true)} refreshToken={dialogs.scheduledRefreshToken} /> : settingsPage ? <SettingsContent
+          /> : agentsPage ? <AgentsPage /> : scheduledPage ? <ScheduledAudit onOpenScheduled={() => dialogs.setScheduledOpen(true)} refreshToken={dialogs.scheduledRefreshToken} /> : route.page === "settings" ? <SettingsContent
+            section={route.section}
             email={email}
             workspaces={spaces.workspaces}
             slack={spaces.slack}
@@ -442,10 +445,12 @@ export function Workspace({
             onCreateSpace={spaces.create}
             onRenameSpace={spaces.rename}
             onRecolorSpace={spaces.recolor}
+            onSetAgentEnabled={spaces.setAgentEnabled}
             onNewAddress={spaces.newAddress}
             onRouteSlack={spaces.routeSlack}
             onDisconnectSlack={spaces.disconnectSlack}
             onOpenScheduled={() => dialogs.setScheduledOpen(true)}
+            onOpenAgent={() => dialogs.setAgentOpen(true)}
             onToast={setToast}
           /> : <WorkspaceMain
             browserNoteCount={browserNoteCount}
