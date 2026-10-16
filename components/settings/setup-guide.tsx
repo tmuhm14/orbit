@@ -2,11 +2,11 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { Bot, KeyRound, LifeBuoy, Sparkles } from "lucide-react";
+import { Bot, KeyRound, LifeBuoy, PlugZap, Sparkles } from "lucide-react";
 import {
-  EXAMPLE_ORIGIN, GUIDE_ANCHORS as A, PLACEHOLDER_KEY, TROUBLESHOOTING, curlExample, mcpConfigExample, settingsHref,
+  EXAMPLE_ORIGIN, GUIDE_ANCHORS as A, PLACEHOLDER_KEY, TROUBLESHOOTING, curlExample, mcpConfigExample, mcpServerUrl, settingsHref,
 } from "@/lib/settings-sections";
-import { CodeBlock } from "./copy";
+import { CodeBlock, CopyButton } from "./copy";
 
 const noop = () => () => {};
 /** This Orbit's origin for the examples; a placeholder while server rendering. */
@@ -27,8 +27,9 @@ function useHashScroll() {
 const CONTENTS = [
   { id: A.organizingAgent, label: "A. The organizing agent" },
   { id: A.delegation, label: "B. Delegating work" },
-  { id: A.externalBots, label: "C. External bots and MCP" },
-  { id: A.troubleshooting, label: "D. Troubleshooting" },
+  { id: A.connectApps, label: "C. Connect from Grok or Claude" },
+  { id: A.externalBots, label: "D. Scripted bots: API keys and local MCP" },
+  { id: A.troubleshooting, label: "E. Troubleshooting" },
 ];
 
 /** Settings → Agents & API keys → Setup guide. Accurate to docs/api/agents.md, connect-a-bot.md and ADR 007. */
@@ -41,7 +42,7 @@ export function SetupGuide({ onToast, onOpenAgent }: { onToast: (message: string
       <nav className="settings-card settings-guide-contents" aria-labelledby="guide-contents">
         <h2 id="guide-contents">On this page</h2>
         <ol>{CONTENTS.map((c) => <li key={c.id}><a href={`#${c.id}`}>{c.label}</a></li>)}</ol>
-        <p className="settings-hint">Three ways an agent works with Orbit: the built-in organizing agent tidies your notes, delegation hands one item to it with the context you choose, and external bots use their own API key.</p>
+        <p className="settings-hint">Four ways an agent works with Orbit: the built-in organizing agent tidies your notes, delegation hands one item to it with the context you choose, apps such as Grok or Claude connect to Orbit’s MCP server after you approve them, and scripted bots use their own API key.</p>
       </nav>
 
       <section className="settings-card settings-guide-part" aria-labelledby={A.organizingAgent}>
@@ -80,9 +81,34 @@ export function SetupGuide({ onToast, onOpenAgent }: { onToast: (message: string
         </ol>
       </section>
 
+      <section className="settings-card settings-guide-part" aria-labelledby={A.connectApps}>
+        <h2 {...heading(A.connectApps)}><PlugZap size={16} aria-hidden="true" /> C. Connect from Grok or Claude</h2>
+        <p>Orbit runs a hosted MCP server. Apps such as the Grok app, Claude and Claude Cowork add it as a <strong>custom connector</strong> (a remote MCP server), and you sign in to Orbit and approve it. No key to copy: Orbit asks you which spaces the app may use.</p>
+        <p>The server URL to paste:</p>
+        <div className="settings-guide-url">
+          <code aria-label="Orbit MCP server URL">{mcpServerUrl(origin)}</code>
+          <CopyButton text={mcpServerUrl(origin)} label="Copy server URL" showLabel className="secondary-button" onToast={onToast} />
+        </div>
+        <ol className="settings-steps">
+          <li>Make sure the agent is on for each space the app should use (<Link href={settingsHref("model")}>Model &amp; agent</Link>). A space that is off is shown as <em>agent access off</em> on the approval screen, and the app can’t use it until you turn it on.</li>
+          <li>In the app, open its connector settings and choose to <strong>add a custom connector</strong> (it may be called a remote MCP server or a custom integration). Give it a name such as “Orbit”, paste the server URL above and save. Leave any client ID and secret fields empty; Orbit registers the app itself.</li>
+          <li>Choose <strong>Connect</strong> (or Sign in). Your browser opens Orbit. Sign in if asked.</li>
+          <li>On Orbit’s approval screen, check two things before anything else: the <strong>app name</strong>, and the <strong>address Orbit will send you back to</strong> (for example <code>grok.com</code> or <code>claude.ai</code>). If either looks wrong, choose <em>Deny</em>.</li>
+          <li><strong>Pick the spaces.</strong> Tick <em>Read</em> to let the app list a space’s notes and <em>Capture</em> to let it add Inbox notes. It can’t change or delete anything. Tick only what it needs, then choose <em>Allow access</em>.</li>
+          <li>You’re sent back to the app, which can now use <code>orbit_list_workspaces</code>, <code>orbit_list_notes</code> and <code>orbit_capture_note</code>.</li>
+        </ol>
+        <p className="settings-hint">Grok’s and Claude’s menu names change from time to time, so yours may differ. The steps are always the same: add a custom connector or remote MCP server, paste the URL, sign in to Orbit, approve.</p>
+        <ul className="settings-bullets">
+          <li><strong>Change what it may do:</strong> in <Link href={settingsHref("agents")}>Agents &amp; API keys</Link>, find the app under <em>Connected apps</em> and choose <em>Edit access</em>. It applies on the app’s next request.</li>
+          <li><strong>Disconnect:</strong> choose <em>Disconnect</em> there. The app loses access on its next request and every token it holds stops working. To use it again, connect it again from the app.</li>
+          <li><strong>What it did:</strong> its requests appear in <em>Recent access</em>, marked “(app)”, without note content.</li>
+          <li><strong>Sign-ins:</strong> the app holds an access token for an hour and renews it in the background. If it hasn’t been used for 30 days, it asks you to sign in again.</li>
+        </ul>
+      </section>
+
       <section className="settings-card settings-guide-part" aria-labelledby={A.externalBots}>
-        <h2 {...heading(A.externalBots)}><KeyRound size={16} aria-hidden="true" /> C. Connect an external bot or MCP client</h2>
-        <p>A bot (Grok, Claude, or your own) gets its own <strong>Orbit API key</strong>, limited to the spaces and actions you grant. It can list notes (Read) and add Inbox notes (Capture). It can’t edit or delete anything.</p>
+        <h2 {...heading(A.externalBots)}><KeyRound size={16} aria-hidden="true" /> D. Scripted bots: API keys and local MCP</h2>
+        <p>For a bot you run yourself (a script, a server, or a local MCP client), create an <strong>Orbit API key</strong>, limited to the spaces and actions you grant. For the Grok or Claude apps, use <a href={`#${A.connectApps}`}>part C</a> instead. It can list notes (Read) and add Inbox notes (Capture). It can’t edit or delete anything.</p>
 
         <h3 {...heading(A.createKey)}>1. Create a key</h3>
         <ol className="settings-steps">
@@ -100,7 +126,7 @@ export function SetupGuide({ onToast, onOpenAgent }: { onToast: (message: string
         <h3 {...heading(A.mcp)}>3. Or use the local MCP adapter</h3>
         <p>Orbit ships a local stdio MCP adapter, <code>scripts/orbit-mcp.mjs</code>. Run <code>npm install</code> in an Orbit checkout, then add an entry like this to your MCP client’s config (for example Claude Desktop’s <code>claude_desktop_config.json</code>). Replace the path, and supply the key through the client’s environment or secret settings:</p>
         <CodeBlock label="MCP client config" language="json" code={mcpConfigExample(origin)} onToast={onToast} />
-        <p className="settings-hint">The adapter offers <code>orbit_list_workspaces</code>, <code>orbit_list_notes</code> (needs Read) and <code>orbit_capture_note</code> (needs Capture). It never prints the key. It’s a local process, not a hosted MCP endpoint.</p>
+        <p className="settings-hint">The adapter offers <code>orbit_list_workspaces</code>, <code>orbit_list_notes</code> (needs Read) and <code>orbit_capture_note</code> (needs Capture). It never prints the key. It runs on your computer; for cloud apps use the hosted server in <a href={`#${A.connectApps}`}>part C</a>. A scripted MCP client can also call the hosted server at <code>{mcpServerUrl(origin)}</code> with <code>Authorization: Bearer</code> and an API key.</p>
 
         <h3 {...heading(A.revoke)}>4. Revoke or rotate a key</h3>
         <ul className="settings-bullets">
@@ -125,7 +151,7 @@ export function SetupGuide({ onToast, onOpenAgent }: { onToast: (message: string
       </section>
 
       <section className="settings-card settings-guide-part" aria-labelledby={A.troubleshooting}>
-        <h2 {...heading(A.troubleshooting)}><LifeBuoy size={16} aria-hidden="true" /> D. Troubleshooting</h2>
+        <h2 {...heading(A.troubleshooting)}><LifeBuoy size={16} aria-hidden="true" /> E. Troubleshooting</h2>
         <p>Errors from <code>/api/v1</code> come back as <code>{"{ \"error\": …, \"code\": … }"}</code>. Find the <code>code</code> here:</p>
         <div className="settings-table-wrap">
           <table className="settings-table">

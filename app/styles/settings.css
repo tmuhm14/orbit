@@ -149,6 +149,12 @@ main.settings-page { max-width: 1120px; padding-top: 40px; padding-bottom: 80px;
 .agent-keys-cell input { accent-color: var(--purple); width: 16px; height: 16px; }
 .agent-keys-off { color: var(--amber); font-weight: 400; font-size: 11px; }
 .agent-keys-prefix { font-weight: 400; }
+.agent-apps-host { font-weight: 400; font-size: 12px; color: var(--blue); margin-left: 4px; }
+.settings-guide-url { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+.settings-guide-url code {
+  flex: 1 1 260px; min-width: 0; padding: 9px 12px; border-radius: 7px; background: #111216; color: #e3d8f5;
+  font-size: 13px; overflow-wrap: anywhere; user-select: all;
+}
 .agent-keys-client.is-revoked { opacity: 0.6; }
 .agent-keys-grants { color: #b9b0c6; }
 .agent-keys-revoked { margin-top: 12px; color: var(--muted); font-size: 12px; }
