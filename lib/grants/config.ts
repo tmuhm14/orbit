@@ -24,18 +24,18 @@ export function apiKeyPepper(env: Env = process.env): string {
 
 /** When Orbit API keys became available; the start of the user-token deprecation. */
 export const USER_TOKEN_DEPRECATED_AT = "2026-10-20";
-/** Proposed 30-day window (ADR 007, awaiting Tony's confirmation). */
-const DEFAULT_USER_TOKEN_SUNSET = "2026-11-19";
-
 /**
- * ORBIT_USER_TOKEN_SUNSET: the calendar date (YYYY-MM-DD, UTC) after which
- * Supabase user tokens are refused on /api/v1 with credential_type_unsupported.
- * Defaults to 30 days after API keys shipped. Set a later date to extend.
+ * ORBIT_USER_TOKEN_SUNSET: optional calendar date (YYYY-MM-DD, UTC). Unset
+ * (the default, decided by Tony 2026-10-15): Supabase user tokens stay
+ * accepted on /api/v1 indefinitely, with a Deprecation header and no Sunset.
+ * Set: responses carry Sunset, and from that date user tokens are refused
+ * with credential_type_unsupported.
  */
-export function userTokenSunset(env: Env = process.env): Date {
-  const value = env.ORBIT_USER_TOKEN_SUNSET?.trim() || DEFAULT_USER_TOKEN_SUNSET;
+export function userTokenSunset(env: Env = process.env): Date | null {
+  const value = env.ORBIT_USER_TOKEN_SUNSET?.trim();
+  if (!value) return null;
   const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00.000Z`) : null;
   if (!date || Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value)
-    throw new ConfigError("ORBIT_USER_TOKEN_SUNSET must be a date like 2026-11-19");
+    throw new ConfigError("ORBIT_USER_TOKEN_SUNSET must be a date like 2027-01-31");
   return date;
 }

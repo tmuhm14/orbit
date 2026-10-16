@@ -1,6 +1,6 @@
 # 007 — External agents authenticate with Orbit-issued API keys
 
-- **Status:** Accepted — decided by Tony, 2026-10-15. Section "Proposed answers" holds proposals awaiting Tony's confirmation.
+- **Status:** Accepted — decided by Tony, 2026-10-15 (credential type, and the answers to ADR 004's remaining open questions in "Decisions on ADR 004's open questions").
 - **Date:** 2026-10-15
 - **Ticket:** A-05 (resolves ADR 004 open question 1; the plan's "auth ADR")
 - **Deciders:** Tony (Solutions Architect)
@@ -81,13 +81,16 @@ Every allowed or denied operation writes one content-free audit row. Audit write
 
 Error bodies are `{error, code}`, with `capability` on `capability_denied`. The `code` field is additive to v1.
 
-### 5. Supabase user tokens: deprecation
+### 5. Supabase user tokens: deprecated, still supported
 
-- These are accepted until the sunset date (`ORBIT_USER_TOKEN_SUNSET`, `YYYY-MM-DD` UTC, default `2026-11-19`). Behavior is unchanged: today's policy, `workspace.read` plus `item.write {create}` behind `agent_enabled`, read on each request.
-- Every response carries `Deprecation: @1792454400` (RFC 9745; 2026-10-20, when keys shipped) and `Sunset: <HTTP-date>` (RFC 8594). The error message and docs point to Settings → Agents & API keys.
+**Decided by Tony, 2026-10-15:** user-token access to `/api/v1` and MCP stays, with no automatic sunset.
+
+- User tokens are accepted with today's policy: `workspace.read` plus `item.write {create}` behind `agent_enabled`, read on each request.
+- Every response carries `Deprecation: @1792454400` (RFC 9745; 2026-10-20, when keys shipped). There is no `Sunset` header by default.
 - Each operation writes an audit row with `principal_type = user_token` and no principal id. If the server role isn't configured, the request still works and logs `access audit unavailable`.
-- From the sunset date on, user tokens are refused with `401 credential_type_unsupported` (ADR 004 §6). To extend the window, set a later date; no code change is needed.
-- The MCP adapter prefers `ORBIT_API_KEY`. It still accepts `ORBIT_ACCESS_TOKEN` with a stderr warning, and warns once when the server sends `Sunset`. Neither value is printed.
+- A sunset can be scheduled later without a code change: set `ORBIT_USER_TOKEN_SUNSET` (`YYYY-MM-DD`, UTC). Responses then add `Sunset: <HTTP-date>` (RFC 8594), and from that date user tokens are refused with `401 credential_type_unsupported` (ADR 004 §6). Unset means never refused.
+- The MCP adapter prefers `ORBIT_API_KEY`. It still accepts `ORBIT_ACCESS_TOKEN`, with a stderr warning recommending a key, and warns once if the server sends `Sunset`. Neither value is printed.
+- Consequence: until a sunset is scheduled, ADR 004 gaps 2 and 3 remain for bots that keep using user tokens. The access log makes that use visible.
 
 ### 6. Settings
 
@@ -126,11 +129,16 @@ The UI offers Read (`workspace.read`) and Capture (`item.write {create}`) per sp
 - **Caching verification for a few seconds:** this would break "revocation applies on the next request". Rejected.
 - **Fail-closed audit:** an audit outage would stop all bot captures. Rejected for v1 because the audit is a security aid, not a compliance record (ADR 004 §5). Revisit if that changes.
 
-## Proposed answers to ADR 004's remaining open questions
+## Decisions on ADR 004's open questions
 
-These are **proposed, awaiting Tony's confirmation**. The implementation follows them, and each can be changed by configuration or a small follow-up.
+All **decided by Tony, 2026-10-15**:
 
-1. **Deprecation window for user-JWT `/api/v1` (ADR 004 Q2):** 30 days from when keys ship (2026-10-20 to 2026-11-19), announced through `Deprecation` / `Sunset` headers and the MCP warning. Afterwards, `401 credential_type_unsupported`. Configurable with `ORBIT_USER_TOKEN_SUNSET`.
-2. **`access_audit_events` retention (ADR 004 Q3):** 90 days, purged daily from scheduler slot `05` by `purge_access_audit_events()`.
-3. **`item.write {update}` for external agents in v1 (ADR 004 Q4):** no; create-only for now. A table check constraint enforces `{"operations": ["create"]}`. Update needs a v1 endpoint on the ADR 002 expected-revision contract, which is a separate ticket and widens the check constraint.
-4. **Slack links and email inbox tokens as grants (ADR 004 Q5):** they stay separate mechanisms until I-01, as ADR 004 proposed. They are not agent principals and are unaffected by this change.
+1. **External agent credential type (ADR 004 Q1):** Orbit-issued per-agent API keys (this ADR).
+2. **Deprecation window for user-JWT `/api/v1` and MCP (ADR 004 Q2):** none for now. User tokens stay accepted indefinitely with a `Deprecation` header and `user_token` audit rows. A sunset is scheduled only by setting `ORBIT_USER_TOKEN_SUNSET` (section 5).
+3. **`access_audit_events` retention (ADR 004 Q3):** 90 days, purged daily from scheduler slot `05` by `purge_access_audit_events()`.
+4. **`item.write {update}` for external agents in v1 (ADR 004 Q4):** no; create-only. A table check constraint enforces `{"operations": ["create"]}`. Update needs a v1 endpoint on the ADR 002 expected-revision contract, which is a separate ticket and widens the check constraint.
+5. **Slack links and email inbox tokens as grants (ADR 004 Q5):** they stay separate mechanisms until I-01. They are not agent principals and are unaffected by this change.
+
+## Open questions
+
+None for this ADR. Scheduling a user-token sunset is a future operational decision (Tony). It needs only `ORBIT_USER_TOKEN_SUNSET`.

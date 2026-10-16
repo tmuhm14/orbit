@@ -75,7 +75,7 @@ test('MCP still accepts ORBIT_ACCESS_TOKEN, warning without echoing it', async (
     try {
       await client.callTool({ name: 'orbit_list_workspaces', arguments: {} });
       assert.deepEqual(seen.map((s) => s.authorization), ['Bearer synthetic-legacy-token']);
-      assert.match(stderr(), /ORBIT_ACCESS_TOKEN .*deprecated/);
+      assert.match(stderr(), /ORBIT_ACCESS_TOKEN .*deprecated. Set ORBIT_API_KEY/);
       assert.match(stderr(), /after Thu, 19 Nov 2026/);
       assert.equal(stderr().includes('synthetic-legacy-token'), false);
     } finally { await client.close(); }

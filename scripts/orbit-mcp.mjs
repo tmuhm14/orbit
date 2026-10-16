@@ -7,8 +7,8 @@ if (base.username || base.password || base.search || base.hash || base.pathname 
   (base.protocol !== 'https:' && !(base.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(base.hostname))))
   throw new Error('ORBIT_URL must be an HTTPS origin (localhost HTTP is allowed)');
 // Credentials (ADR 007): an Orbit API key from Settings → Agents & API keys.
-// ORBIT_ACCESS_TOKEN (a Supabase user token) still works during the
-// deprecation window, with a warning. Neither value is ever printed.
+// ORBIT_ACCESS_TOKEN (a Supabase user token) still works (deprecated), with
+// a warning recommending a key. Neither value is ever printed.
 const apiKey = process.env.ORBIT_API_KEY?.trim();
 const legacyToken = process.env.ORBIT_ACCESS_TOKEN?.trim();
 if (apiKey && !/^orbit_sk_[0-9a-f]{12}_[A-Za-z0-9_-]{43}$/.test(apiKey))
@@ -16,7 +16,7 @@ if (apiKey && !/^orbit_sk_[0-9a-f]{12}_[A-Za-z0-9_-]{43}$/.test(apiKey))
 if (!apiKey && !legacyToken)
   throw new Error('Set ORBIT_API_KEY to an Orbit API key (Settings → Agents & API keys)');
 if (!apiKey)
-  console.error('Warning: ORBIT_ACCESS_TOKEN (a Supabase user token) is deprecated and will stop working. Set ORBIT_API_KEY to an Orbit API key instead.');
+  console.error('Warning: ORBIT_ACCESS_TOKEN (a Supabase user token) is deprecated. Set ORBIT_API_KEY to an Orbit API key (Settings → Agents & API keys) for scoped, revocable access.');
 const token = apiKey || legacyToken;
 
 export function createOrbitServer(call) {

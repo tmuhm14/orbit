@@ -3,7 +3,7 @@
   "info": {
     "title": "Orbit Agent API",
     "version": "1.5.0",
-    "description": "External agents authenticate /api/v1 with an Orbit API key (orbitApiKey) created in Settings → Agents & API keys and scoped by capability grants (ADR 004, ADR 007). Supabase user access tokens (bearerAuth) are deprecated: they are accepted until the sunset date with Deprecation and Sunset response headers, then refused with 401 credential_type_unsupported. Browser routes use cookieSession."
+    "description": "External agents authenticate /api/v1 with an Orbit API key (orbitApiKey) created in Settings → Agents & API keys and scoped by capability grants (ADR 004, ADR 007). Supabase user access tokens (bearerAuth) remain supported but are deprecated: responses carry a Deprecation header. No sunset is scheduled by default; if one is (ORBIT_USER_TOKEN_SUNSET), responses add a Sunset header and from that date user tokens are refused with 401 credential_type_unsupported. Browser routes use cookieSession."
   },
   "security": [
     {
@@ -25,7 +25,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "Supabase user JWT",
-        "description": "Deprecated. A Supabase user access token, accepted on /api/v1 until the sunset date (ORBIT_USER_TOKEN_SUNSET, default 2026-11-19) with today's access: workspace.read and item.write {create} in agent-enabled workspaces."
+        "description": "Deprecated but still supported. A Supabase user access token, with today's access: workspace.read and item.write {create} in agent-enabled workspaces. No sunset unless ORBIT_USER_TOKEN_SUNSET is set."
       },
       "cookieSession": {
         "type": "apiKey",
@@ -931,7 +931,7 @@
                 }
               },
               "Sunset": {
-                "description": "Only for deprecated Supabase user tokens (RFC 8594): when they stop being accepted.",
+                "description": "Only for deprecated Supabase user tokens, and only when a sunset is scheduled (RFC 8594). Not sent by default.",
                 "schema": {
                   "type": "string"
                 }
@@ -984,7 +984,7 @@
             }
           },
           "401": {
-            "description": "invalid_credentials (missing, malformed, unknown or expired), client_revoked, or credential_type_unsupported (user token after the sunset)",
+            "description": "invalid_credentials (missing, malformed, unknown or expired), client_revoked, or credential_type_unsupported (user token after a scheduled sunset; none by default)",
             "content": {
               "application/json": {
                 "schema": {
@@ -1067,7 +1067,7 @@
                 }
               },
               "Sunset": {
-                "description": "Only for deprecated Supabase user tokens (RFC 8594): when they stop being accepted.",
+                "description": "Only for deprecated Supabase user tokens, and only when a sunset is scheduled (RFC 8594). Not sent by default.",
                 "schema": {
                   "type": "string"
                 }
@@ -1085,7 +1085,7 @@
             }
           },
           "401": {
-            "description": "invalid_credentials (missing, malformed, unknown or expired), client_revoked, or credential_type_unsupported (user token after the sunset)",
+            "description": "invalid_credentials (missing, malformed, unknown or expired), client_revoked, or credential_type_unsupported (user token after a scheduled sunset; none by default)",
             "content": {
               "application/json": {
                 "schema": {
@@ -1188,7 +1188,7 @@
                 }
               },
               "Sunset": {
-                "description": "Only for deprecated Supabase user tokens (RFC 8594): when they stop being accepted.",
+                "description": "Only for deprecated Supabase user tokens, and only when a sunset is scheduled (RFC 8594). Not sent by default.",
                 "schema": {
                   "type": "string"
                 }
@@ -1206,7 +1206,7 @@
             }
           },
           "401": {
-            "description": "invalid_credentials (missing, malformed, unknown or expired), client_revoked, or credential_type_unsupported (user token after the sunset)",
+            "description": "invalid_credentials (missing, malformed, unknown or expired), client_revoked, or credential_type_unsupported (user token after a scheduled sunset; none by default)",
             "content": {
               "application/json": {
                 "schema": {

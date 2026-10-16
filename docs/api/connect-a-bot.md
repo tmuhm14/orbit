@@ -44,4 +44,4 @@ Settings → Agents & API keys shows when each key was last used. It also has a 
 
 ## Migrating from `ORBIT_ACCESS_TOKEN`
 
-Bots that send a Supabase user access token keep working until the sunset date (proposed: 2026-11-19). Responses include `Deprecation` and `Sunset` headers, and the MCP adapter prints a warning. To migrate, create a key as above, replace `ORBIT_ACCESS_TOKEN` with `ORBIT_API_KEY`, and stop refreshing the user session in the bot.
+Bots that send a Supabase user access token keep working; no end date is scheduled. That access is deprecated: responses include a `Deprecation` header, and the MCP adapter prints a warning. An API key is scoped and revocable, so we recommend moving to one. To migrate, create a key as above, replace `ORBIT_ACCESS_TOKEN` with `ORBIT_API_KEY`, and stop refreshing the user session in the bot.

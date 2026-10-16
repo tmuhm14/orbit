@@ -19,10 +19,11 @@ Send `Authorization: Bearer orbit_sk_<prefix>_<secret>` on every request. Cookie
   - The space's **Allow the agent to read and change notes** switch is still a kill switch: when it is off, no key can use that space, whatever its grants.
 - **Revocation and changes:** revoking a key, or removing a grant, applies to the key's **next request**. Orbit checks the key and its grants on every call.
 - **Access log:** each operation is recorded without content (which key, which operation, which space, allowed or refused, and when). The log is shown under Settings → Agents & API keys and kept 90 days.
-- **Supabase user tokens (deprecated):**
-  - Requests with a Supabase user access token still work until the sunset date, with today's access: read and capture in agent-enabled spaces.
-  - Each response carries `Deprecation: @1792454400` and `Sunset: <date>` (default `Thu, 19 Nov 2026 00:00:00 GMT`).
-  - From the sunset date on, these tokens are refused with `401 credential_type_unsupported`. Switch to an API key before then.
+- **Supabase user tokens (deprecated, still supported):**
+  - Requests with a Supabase user access token keep working, with today's access: read and capture in agent-enabled spaces. Each request is recorded in the access log as a session token.
+  - Each response carries `Deprecation: @1792454400`. No end date is scheduled, so there is no `Sunset` header.
+  - If an end date is scheduled later (server setting `ORBIT_USER_TOKEN_SUNSET`), responses add `Sunset: <date>`, and from that date these tokens are refused with `401 credential_type_unsupported`.
+  - Prefer an API key: it is scoped to the spaces you choose and can be revoked at once.
 
 ## HTTP API
 
@@ -58,7 +59,7 @@ Errors return `{error, code}`:
 | 400 | — | Invalid input |
 | 401 | `invalid_credentials` | Missing, malformed, unknown or expired credential |
 | 401 | `client_revoked` | The key was revoked in Settings |
-| 401 | `credential_type_unsupported` | A Supabase user token after the sunset date |
+| 401 | `credential_type_unsupported` | A Supabase user token after a scheduled sunset date (none is scheduled by default) |
 | 403 | `capability_denied` | The key has no such grant in that space. The body adds `capability`. Unknown spaces answer the same way |
 | 403 | `agent_disabled` | The space's agent switch is off |
 | 413 | — | Body too large |
@@ -94,7 +95,7 @@ Your Grok bot can call these APIs from its tool handlers; Orbit does not require
 }
 ```
 
-- `ORBIT_ACCESS_TOKEN`, a Supabase user token, still works during the deprecation window. It prints a warning to stderr.
+- `ORBIT_ACCESS_TOKEN`, a Supabase user token, still works. It is deprecated, so the adapter prints a warning to stderr recommending `ORBIT_API_KEY`.
 - If both variables are set, `ORBIT_API_KEY` wins.
 - The adapter never prints either value.
 

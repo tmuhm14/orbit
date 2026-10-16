@@ -13,8 +13,9 @@ import { recordAccess, type AccessOperation } from "@/lib/grants/audit";
  *   request; grants come back with the verification, so revocation and grant
  *   changes apply to the next call. Data access uses the server role, always
  *   filtered to the key's user and checked against its grants.
- * - Supabase user tokens: accepted during the deprecation window with
- *   Deprecation / Sunset headers, then refused with credential_type_unsupported.
+ * - Supabase user tokens: still accepted (deprecated) with a Deprecation
+ *   header and a user_token audit row. Only if ORBIT_USER_TOKEN_SUNSET is set:
+ *   a Sunset header, then refusal with credential_type_unsupported from that date.
  * Keys and tokens are never logged or echoed; logs carry the key prefix only.
  */
 
@@ -77,14 +78,14 @@ async function apiKeyAuth(token: string, operation: AccessOperation) {
 }
 
 async function userTokenAuth(token: string) {
-  let sunset: Date;
+  let sunset: Date | null;
   try {
     sunset = userTokenSunset();
   } catch (error) {
     console.error(error instanceof ConfigError ? error.message : "User token sunset invalid");
     return failure("Not configured", "not_configured", 503);
   }
-  if (Date.now() >= sunset.getTime())
+  if (sunset && Date.now() >= sunset.getTime())
     return failure("Supabase user tokens are no longer accepted. Create an Orbit API key in Settings.",
       "credential_type_unsupported", 401);
   const config = authConfig();
@@ -95,10 +96,10 @@ async function userTokenAuth(token: string) {
   });
   const { data, error } = await supabase.auth.getUser(token);
   if (error || !data.user) return failure("Invalid or expired access token", "invalid_credentials", 401);
-  const headers = {
-    // RFC 9745 / RFC 8594.
+  const headers: Record<string, string> = {
+    // RFC 9745. Sunset (RFC 8594) only once a date is scheduled.
     Deprecation: `@${Math.floor(Date.parse(`${USER_TOKEN_DEPRECATED_AT}T00:00:00Z`) / 1000)}`,
-    Sunset: httpDate(sunset),
+    ...(sunset ? { Sunset: httpDate(sunset) } : {}),
   };
   return { userId: data.user.id, principal: { type: "user_token" }, db: supabase,
     admin: createAdminClient(), headers } satisfies IntegrationAuth;
