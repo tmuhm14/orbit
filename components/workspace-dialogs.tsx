@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Layers } from "lucide-react";
+import { Layers } from "lucide-react";
 import type { Note, Workspace as WorkspaceInfo } from "@/lib/notes";
 import type { Assignment } from "@/lib/assignments/types";
+import { ActionToast, type ActionNotification } from "./action-toast";
 import { AgentDialog } from "./agent-dialog";
 import { AssignmentDetailDialog } from "./assignment-detail";
 import { GuideDialog } from "./guide-dialog";
@@ -54,17 +55,17 @@ export function useWorkspaceDialogs(initialSearchOpen: boolean) {
 
 export type WorkspaceDialogsState = ReturnType<typeof useWorkspaceDialogs>;
 
-/** A toast: plain text, or text with one action (shown longer so it can be used). */
-export type ToastValue = string | { message: string; action: ToastAction };
+/** Strings remain compatible with all action callers; every call gets a new id. */
+export type ToastValue = ActionNotification | null;
+type ToastInput = string | { message: string; action: ToastAction };
 
-/** Auto-dismissing status toast. */
 export function useToast() {
-  const [toast, setToast] = useState<ToastValue>("");
-  useEffect(() => {
-    if (!toast) return;
-    const timer = setTimeout(() => setToast(""), typeof toast === "string" ? 3500 : 8000);
-    return () => clearTimeout(timer);
-  }, [toast]);
+  const [toast, updateToast] = useState<ToastValue>(null);
+  const sequence = useRef(0);
+  const setToast = useCallback((value: ToastInput) => {
+    if (!value) { updateToast(null); return; }
+    updateToast({ id: ++sequence.current, ...(typeof value === "string" ? { message: value } : value) });
+  }, []);
   return [toast, setToast] as const;
 }
 
@@ -292,26 +293,7 @@ export function WorkspaceDialogs({
           onToast={onToast}
         />
       )}
-      {toast && (
-        <div className={`toast ${typeof toast === "string" ? "" : "has-action"}`} role="status">
-          <span>
-            <Check size={14} />
-          </span>
-          {typeof toast === "string" ? toast : toast.message}
-          {typeof toast !== "string" && (
-            <button
-              type="button"
-              className="toast-action"
-              onClick={() => {
-                onDismissToast();
-                toast.action.onAction();
-              }}
-            >
-              {toast.action.label}
-            </button>
-          )}
-        </div>
-      )}
+      {toast && <ActionToast key={toast.id} toast={toast} onDismiss={onDismissToast} />}
     </>
   );
 }
