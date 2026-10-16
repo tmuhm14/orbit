@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { as, createDb, migrate, skip } from "./harness.mjs";
+import { as, createDb, migrate, migrationFiles, skip } from "./harness.mjs";
 
 // U-05's migration is applied to production before the code that uses it.
 // Proof that it changes nothing for the deployed app:
@@ -47,7 +47,9 @@ async function catalog(db) {
 
 test("catalog: nothing existing changes; one function, one index and one event type are added", { skip }, async () => {
   const before = await catalog(await database(MIGRATION));
-  const after = await catalog(await database());
+  // Up to and including this migration only: later migrations (A-04's jobs
+  // tables) add objects of their own and have their own compatibility test.
+  const after = await catalog(await database(migrationFiles().find((f) => f > MIGRATION)));
   assert.ok(before.functions.length > 40);
   for (const key of ["triggers", "policies", "tables", "columns"]) assert.deepEqual(after[key], before[key], key);
   const added = after.functions.filter((f) => !before.functions.some((b) => b.k === f.k));
