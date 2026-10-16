@@ -94,3 +94,14 @@ test('MCP refuses a malformed ORBIT_API_KEY without echoing it, and requires a c
     assert.equal(stderr.includes('sk-not-orbit-secret-value'), false);
   }
 });
+
+// ADR 008: the adapter and the hosted /api/mcp register the same tools from lib/mcp/tools.mjs.
+test('MCP adapter tools come from the shared definitions', async () => {
+  const { ORBIT_TOOLS } = await import('../lib/mcp/tools.mjs');
+  const { client } = await connect({ ORBIT_URL: 'http://127.0.0.1:1', ORBIT_API_KEY: KEY });
+  try {
+    const { tools } = await client.listTools();
+    assert.deepEqual(tools.map((t) => [t.name, t.description, t.annotations.readOnlyHint]),
+      ORBIT_TOOLS.map((t) => [t.name, t.description, t.readOnly]));
+  } finally { await client.close(); }
+});

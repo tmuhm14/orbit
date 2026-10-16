@@ -20,6 +20,11 @@ const PURGE_SLOT = "03";
 // day from this one slot; repeating it is harmless.
 const AUDIT_PURGE_SLOT = "05";
 
+// Expired OAuth codes and tokens, and registered apps nobody consented to
+// within 7 days (ADR 008). Purged once a day from this one slot (03 and 05
+// are taken); repeating it is harmless.
+const OAUTH_PURGE_SLOT = "06";
+
 async function purgeAgentActionValues(admin: NonNullable<ReturnType<typeof createAdminClient>>) {
   try {
     const { data, error } = await admin.rpc("purge_agent_action_values");
@@ -44,6 +49,18 @@ async function purgeAccessAuditEvents(admin: NonNullable<ReturnType<typeof creat
   }
 }
 
+async function purgeOAuthRecords(admin: NonNullable<ReturnType<typeof createAdminClient>>) {
+  try {
+    const { data, error } = await admin.rpc("purge_oauth_records");
+    if (error) throw new Error("purge failed");
+    return Number(data) || 0;
+  } catch {
+    // Counts only.
+    console.error("oauth purge failed");
+    return null;
+  }
+}
+
 export async function GET(request: Request, { params }: { params: Promise<{ slot: string }> }) {
   const secret = process.env.CRON_SECRET;
   if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`)
@@ -58,6 +75,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slot
   if (!admin) return new Response("Unavailable", { status: 503 });
   const purged = slot === PURGE_SLOT ? await purgeAgentActionValues(admin) : undefined;
   const auditPurged = slot === AUDIT_PURGE_SLOT ? await purgeAccessAuditEvents(admin) : undefined;
+  const oauthPurged = slot === OAUTH_PURGE_SLOT ? await purgeOAuthRecords(admin) : undefined;
   const { data: tasks, error } = await admin.from("scheduled_tasks")
     .select("id,user_id,name,kind,enabled,timezone,delivery_hour,cadence,jira_projects,github_repos,created_at")
     .eq("enabled", true).returns<ScheduledTask[]>();
@@ -78,5 +96,6 @@ export async function GET(request: Request, { params }: { params: Promise<{ slot
     failed,
     ...(purged !== undefined ? { purged } : {}),
     ...(auditPurged !== undefined ? { auditPurged } : {}),
+    ...(oauthPurged !== undefined ? { oauthPurged } : {}),
   });
 }

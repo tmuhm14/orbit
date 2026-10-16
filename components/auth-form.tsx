@@ -25,12 +25,15 @@ export function AuthForm({
   initialMode = "login",
   initialMessage,
   initialError,
+  next,
 }: {
   configured: boolean;
   emailEnabled?: boolean;
   initialMode?: Mode;
   initialMessage?: string;
   initialError?: string;
+  /** A safe relative path to open after signing in (checked by the page). */
+  next?: string;
 }) {
   const [mode, setMode] = useState<Mode>(initialMode);
   useEffect(announceAuthChange, []);
@@ -74,6 +77,7 @@ export function AuthForm({
             emailEnabled={emailEnabled}
             initialMessage={mode === initialMode ? initialMessage : undefined}
             initialError={mode === initialMode ? initialError : undefined}
+            next={next}
           />
         </section>
       </div>
@@ -90,6 +94,7 @@ function AuthFields({
   emailEnabled = false,
   initialMessage,
   initialError,
+  next,
 }: {
   mode: Mode;
   setMode: (mode: Mode) => void;
@@ -97,6 +102,7 @@ function AuthFields({
   emailEnabled?: boolean;
   initialMessage?: string;
   initialError?: string;
+  next?: string;
 }) {
   const [showPassword, setShowPassword] = useState(false);
   const [state, action, pending] = useActionState<AuthState, FormData>(
@@ -108,8 +114,8 @@ function AuthFields({
   // with its new session cookies, and nothing from the signed-out page stays
   // in memory. Replace keeps the sign-in page out of the back history.
   useEffect(() => {
-    if (signedIn) window.location.replace("/");
-  }, [signedIn]);
+    if (signedIn) window.location.replace(next ?? "/");
+  }, [signedIn, next]);
   const busy = pending || signedIn;
   const labels = {
     login: {

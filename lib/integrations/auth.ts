@@ -141,7 +141,8 @@ export async function authorize(auth: IntegrationAuth, capability: Capability, w
       outcome: "denied", code });
     // Generic messages; principal and code only (ADR 004 §5–6).
     if (auth.principal.type === "agent_client")
-      console.warn(JSON.stringify({ event: "integration_auth.denied", key: `orbit_sk_${auth.principal.keyPrefix}`, capability, code }));
+      console.warn(JSON.stringify({ event: "integration_auth.denied",
+        key: auth.principal.label ?? `orbit_sk_${auth.principal.keyPrefix}`, capability, code }));
     return code === "agent_disabled"
       ? reply({ error: "Workspace unavailable or agent access disabled", code }, 403, auth.headers)
       : reply({ error: "This key does not have that capability in this workspace", code, capability }, 403, auth.headers);

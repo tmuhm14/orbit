@@ -21,7 +21,15 @@ export type Grant = {
 };
 
 export type Principal =
-  | { type: "agent_client"; clientId: string; keyPrefix: string; grants: Grant[] }
+  | {
+      type: "agent_client"; clientId: string; keyPrefix: string; grants: Grant[];
+      /**
+       * How it authenticated: an Orbit API key (the default) or an OAuth
+       * access token on the hosted MCP endpoint (ADR 008). `label` is the
+       * loggable credential form (a key or token prefix), never the secret.
+       */
+      credential?: "api_key" | "oauth"; label?: string;
+    }
   /** Transitional: a Supabase user JWT on /api/v1 during the deprecation window. */
   | { type: "user_token" };
 
@@ -68,4 +76,13 @@ export function parseGrants(value: unknown): Grant[] {
       agentEnabled: row.agentEnabled === true,
     }];
   });
+}
+
+/**
+ * OAuth tokens carry scopes (ADR 008) that cap the grants: a grant is usable
+ * only if the token's scope allows its capability. Never widens anything.
+ */
+export function grantsWithinScope(grants: Grant[], capabilities: readonly string[]): Grant[] {
+  const allowed = new Set(capabilities);
+  return grants.filter((g) => allowed.has(g.capability));
 }

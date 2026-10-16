@@ -59,7 +59,8 @@ test("a failed purge does not stop the tick, and unauthorized ticks do nothing",
 test("no tick reaps or recovers assignments any more (the jobs worker does, every minute)", async () => {
   const bodies = [];
   for (let hour = 0; hour < 24; hour++) bodies.push((await tick(String(hour).padStart(2, "0"))).body);
-  assert.deepEqual(rpcCalls.filter((n) => n !== "purge_agent_action_values" && n !== "purge_access_audit_events"), []);
+  assert.deepEqual(rpcCalls.filter((n) => n !== "purge_agent_action_values" && n !== "purge_access_audit_events" &&
+    n !== "purge_oauth_records"), []);
   assert.ok(bodies.every((b) => !("reaped" in b)));
 });
 
@@ -84,4 +85,26 @@ test("a failed audit purge does not stop the tick and logs no detail", async () 
     console.error = original;
   }
   assert.deepEqual(errors, [["access audit purge failed"]]);
+});
+
+// OAuth records (ADR 008): expired codes and tokens, unconsented apps. Slot 06 only.
+test("purges OAuth records once a day, from slot 06 only", async () => {
+  const bodies = [];
+  for (let hour = 0; hour < 24; hour++) bodies.push((await tick(String(hour).padStart(2, "0"))).body);
+  assert.deepEqual(rpcCalls.filter((n) => n === "purge_oauth_records"), ["purge_oauth_records"]);
+  assert.deepEqual(bodies[6], { completed: 0, failed: 0, oauthPurged: 2 });
+  assert.ok(bodies.every((b, hour) => hour === 6 || b.oauthPurged === undefined));
+});
+
+test("a failed OAuth purge does not stop the tick and logs no detail", async () => {
+  rpcResult = { data: null, error: { message: "boom" } };
+  const errors = [];
+  const original = console.error;
+  console.error = (...args) => errors.push(args);
+  try {
+    assert.deepEqual(await tick("06"), { status: 200, body: { completed: 0, failed: 0, oauthPurged: null } });
+  } finally {
+    console.error = original;
+  }
+  assert.deepEqual(errors, [["oauth purge failed"]]);
 });

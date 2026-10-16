@@ -8,8 +8,8 @@ export const SETTINGS_SECTIONS = [
   { id: "capture", path: "capture", label: "Capture", description: "Where Slack and email send new notes." },
   { id: "model", path: "model", label: "Model & agent", description: "The model provider and key the organizing agent uses, and where it may work." },
   { id: "integrations", path: "integrations", label: "Integrations", description: "Jira and GitHub, the sources for scheduled reports." },
-  { id: "agents", path: "agents", label: "Agents & API keys", description: "Keys for external agents and bots, and what they did." },
-  { id: "setup", path: "agents/setup", label: "Setup guide", description: "How to set up the organizing agent, delegation and external bots, step by step." },
+  { id: "agents", path: "agents", label: "Agents & API keys", description: "Connected apps and keys for external agents and bots, and what they did." },
+  { id: "setup", path: "agents/setup", label: "Setup guide", description: "How to set up the organizing agent, delegation, Grok or Claude, and external bots, step by step." },
 ] as const;
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]["id"];
@@ -26,6 +26,7 @@ export function settingsSection(id: SettingsSection) {
 export const GUIDE_ANCHORS = {
   organizingAgent: "organizing-agent",
   delegation: "delegation",
+  connectApps: "connect-apps",
   externalBots: "external-bots",
   createKey: "create-key",
   callApi: "call-the-api",
@@ -129,6 +130,9 @@ export function mcpConfigExample(origin: string) {
     },
   }, null, 2);
 }
+
+/** The hosted MCP server URL to paste into Grok or Claude (ADR 008). */
+export const mcpServerUrl = (origin: string) => `${origin.replace(/\/+$/, "")}/api/mcp`;
 
 /** The origin shown in examples when the page's own origin isn't known yet. */
 export const EXAMPLE_ORIGIN = "https://your-orbit.example.com";

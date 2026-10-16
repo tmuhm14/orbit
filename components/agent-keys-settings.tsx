@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { KeyRound, Plus, RefreshCw, ShieldCheck } from "lucide-react";
+import { KeyRound, PlugZap, Plus, RefreshCw, ShieldCheck } from "lucide-react";
 import type { Workspace } from "@/lib/notes";
 import {
   CODE_LABELS, GRANT_OPTIONS, OPERATION_LABELS, fromKeys, grantKeys, grantSummary, keyDisplay, when,
-  type AccessEvent, type AgentClient,
+  type AccessEvent, type AgentClient, type ClientGrant,
 } from "@/lib/grants/view";
+import type { Connection } from "@/lib/oauth/connections";
 import { GUIDE_ANCHORS, guideHref, isDirty } from "@/lib/settings-sections";
 import { ConfirmDialog, FormDialog, SidePanel } from "./side-panel";
 import { CopyButton } from "./settings/copy";
@@ -130,8 +131,10 @@ function CreateKeyDialog({ workspaces, onCreated, onClose, onToast }: {
   );
 }
 
+/** Edit access for an API key or a connected app: both are agent clients with grants (ADR 007, ADR 008). */
 function EditAccessPanel({ client, workspaces, onSaved, onClose }: {
-  client: AgentClient; workspaces: Workspace[]; onSaved: () => Promise<void>; onClose: () => void;
+  client: { id: string; name: string; grants: ClientGrant[]; keyPrefix?: string; redirectHosts?: string[] };
+  workspaces: Workspace[]; onSaved: () => Promise<void>; onClose: () => void;
 }) {
   const [initial] = useState(() => grantKeys(client.grants));
   const [draft, setDraft] = useState(initial);
@@ -141,7 +144,9 @@ function EditAccessPanel({ client, workspaces, onSaved, onClose }: {
   return (
     <SidePanel
       title={`Edit access for ‘${client.name}’`}
-      description={<>Key <code>{keyDisplay(client.keyPrefix)}</code>. Changes apply on the bot’s next request.</>}
+      description={client.keyPrefix
+        ? <>Key <code>{keyDisplay(client.keyPrefix)}</code>. Changes apply on the bot’s next request.</>
+        : <>Connected app returning to <strong>{client.redirectHosts?.join(", ")}</strong>. Changes apply on the app’s next request.</>}
       onClose={onClose}
       dirty={dirty}
       busy={busy}
@@ -162,9 +167,29 @@ function EditAccessPanel({ client, workspaces, onSaved, onClose }: {
     >
       <GrantGrid workspaces={workspaces} value={draft} onChange={setDraft} disabled={busy} idPrefix={`edit-${client.id}`} />
       <p className="settings-hint">{GRANT_HELP}</p>
-      <p className="settings-hint">A space whose agent access is off blocks every key, whatever it’s granted. Turn it on in Model &amp; agent.</p>
+      <p className="settings-hint">A space whose agent access is off blocks every key and app, whatever it’s granted. Turn it on in Model &amp; agent.</p>
     </SidePanel>
   );
+}
+
+function ConnectionRow({ app, workspaces, onEdit, onDisconnect }: {
+  app: Connection; workspaces: Workspace[]; onEdit?: () => void; onDisconnect?: () => void;
+}) {
+  const revoked = !!app.revokedAt;
+  return <li className={`settings-row agent-keys-client${revoked ? " is-revoked" : ""}`}>
+    <div className="settings-row-main">
+      <strong>{app.name} <span className="agent-apps-host" title="Where Orbit sent you back when you connected it">{app.redirectHosts.join(", ")}</span></strong>
+      <span className="settings-row-meta">
+        <span>Connected {when(app.connectedAt)}</span>
+        <span>Last used {when(app.lastUsedAt)}</span>
+        {revoked ? <span>Disconnected {when(app.revokedAt)}</span> : <span className="agent-keys-grants">{grantSummary(app.grants, workspaces)}</span>}
+      </span>
+    </div>
+    {!revoked && <div className="settings-row-actions">
+      <button type="button" className="text-button" aria-haspopup="dialog" onClick={onEdit}>Edit access<span className="sr-only"> for {app.name}</span></button>
+      <button type="button" className="text-button settings-danger-text" aria-haspopup="dialog" onClick={onDisconnect}>Disconnect<span className="sr-only"> {app.name}</span></button>
+    </div>}
+  </li>;
 }
 
 function ClientRow({ client, workspaces, onEdit, onRevoke }: {
@@ -187,18 +212,22 @@ function ClientRow({ client, workspaces, onEdit, onRevoke }: {
   </li>;
 }
 
-/** Settings → Agents & API keys (A-05). */
+/** Settings → Agents & API keys: connected apps (ADR 008), API keys (A-05) and the access log. */
 export function AgentKeysSettings({ workspaces, onToast }: { workspaces: Workspace[]; onToast: (message: string) => void }) {
   const [clients, setClients] = useState<AgentClient[] | null>(null);
+  const [apps, setApps] = useState<Connection[] | null>(null);
   const [events, setEvents] = useState<AccessEvent[] | null>(null);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
-  const [editing, setEditing] = useState<AgentClient | null>(null);
+  const [editing, setEditing] = useState<AgentClient | Connection | null>(null);
   const [revoking, setRevoking] = useState<AgentClient | null>(null);
+  const [disconnecting, setDisconnecting] = useState<Connection | null>(null);
 
   const refresh = useCallback(async () => {
-    const [list, log] = await Promise.all([send("/api/agent-clients"), send("/api/agent-clients/access-log?limit=50")]);
+    const [list, connected, log] = await Promise.all([send("/api/agent-clients"), send("/api/oauth/connections"),
+      send("/api/agent-clients/access-log?limit=50")]);
     setClients(list.clients as AgentClient[]);
+    setApps(connected.connections as Connection[]);
     setEvents(log.events as AccessEvent[]);
     setError("");
   }, []);
@@ -206,12 +235,30 @@ export function AgentKeysSettings({ workspaces, onToast }: { workspaces: Workspa
     void refresh().catch((failure) => setError(message(failure, "Couldn’t load API keys")));
   }, [refresh]);
 
-  const clientName = (id: string | null) => clients?.find((c) => c.id === id)?.name ?? "Deleted key";
+  const clientName = (id: string | null) => clients?.find((c) => c.id === id)?.name ??
+    (apps?.find((a) => a.id === id) ? `${apps.find((a) => a.id === id)!.name} (app)` : "Deleted key or app");
   const spaceName = (id: string | null) => (id && workspaces.find((w) => w.id === id)?.name) || (id ? "Deleted space" : "—");
   const active = clients?.filter((c) => !c.revokedAt) ?? [];
   const revoked = clients?.filter((c) => c.revokedAt) ?? [];
+  const activeApps = apps?.filter((a) => !a.revokedAt) ?? [];
+  const pastApps = apps?.filter((a) => a.revokedAt) ?? [];
 
   return <>
+    <section className="settings-card" aria-labelledby="agent-apps-list">
+      <div className="settings-card-heading">
+        <div>
+          <h2 id="agent-apps-list"><PlugZap size={15} aria-hidden="true" /> Connected apps</h2>
+          <p>Apps such as Grok or Claude that you connected to Orbit’s MCP server by signing in and approving them. <Link href={guideHref(GUIDE_ANCHORS.connectApps)}>How do I connect one?</Link></p>
+        </div>
+      </div>
+      {!apps ? <p className="settings-empty" role="status">{error ? "Unavailable." : "Loading…"}</p> : !activeApps.length
+        ? <p className="settings-empty">No connected apps. Add Orbit as a custom connector in Grok or Claude, then approve it here.</p>
+        : <ul className="settings-list">{activeApps.map((a) => <ConnectionRow key={a.id} app={a} workspaces={workspaces}
+            onEdit={() => setEditing(a)} onDisconnect={() => setDisconnecting(a)} />)}</ul>}
+      {pastApps.length > 0 && <details className="agent-keys-revoked"><summary>{pastApps.length} disconnected</summary>
+        <ul className="settings-list">{pastApps.map((a) => <ConnectionRow key={a.id} app={a} workspaces={workspaces} />)}</ul></details>}
+    </section>
+
     <section className="settings-card" aria-labelledby="agent-keys-list">
       <div className="settings-card-heading has-action">
         <div>
@@ -235,7 +282,7 @@ export function AgentKeysSettings({ workspaces, onToast }: { workspaces: Workspa
       <div className="settings-card-heading has-action">
         <div>
           <h2 id="agent-keys-log"><ShieldCheck size={15} aria-hidden="true" /> Recent access</h2>
-          <p>What each agent did, never what it read or wrote. Kept 90 days. <Link href={guideHref(GUIDE_ANCHORS.accessLog)}>Reading the log</Link></p>
+          <p>What each key and connected app did, never what it read or wrote. Kept 90 days. <Link href={guideHref(GUIDE_ANCHORS.accessLog)}>Reading the log</Link></p>
         </div>
         <button type="button" className="icon-button" aria-label="Refresh access log" title="Refresh"
           onClick={() => void refresh().then(() => onToast("Access log refreshed"), () => onToast("Couldn’t refresh"))}><RefreshCw size={14} /></button>
@@ -257,6 +304,20 @@ export function AgentKeysSettings({ workspaces, onToast }: { workspaces: Workspa
     {creating && <CreateKeyDialog workspaces={workspaces} onToast={onToast} onClose={() => setCreating(false)} onCreated={refresh} />}
     {editing && <EditAccessPanel client={editing} workspaces={workspaces} onClose={() => setEditing(null)}
       onSaved={async () => { await refresh(); setEditing(null); onToast("Access updated"); }} />}
+    {disconnecting && <ConfirmDialog
+      tone="danger"
+      title={`Disconnect ‘${disconnecting.name}’?`}
+      body={<>The app loses access on its next request, and every token it holds stops working. This can’t be undone.</>}
+      hint="To use it again, add Orbit in the app once more and approve it."
+      confirmLabel="Disconnect"
+      onCancel={() => setDisconnecting(null)}
+      onConfirm={async () => {
+        await send(`/api/oauth/connections/${disconnecting.id}/disconnect`, { method: "POST" });
+        await refresh().catch(() => undefined);
+        onToast(`${disconnecting.name} disconnected`);
+        setDisconnecting(null);
+      }}
+    />}
     {revoking && <ConfirmDialog
       tone="danger"
       title={`Revoke ‘${revoking.name}’?`}

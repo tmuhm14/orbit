@@ -13,8 +13,9 @@ export async function GET(request: Request) {
   const auth = await routeUser(request);
   if ("error" in auth) return auth.error;
   const [clients, grants] = await Promise.all([
+    // API keys only; OAuth connections are listed by /api/oauth/connections (ADR 008).
     auth.supabase.from("agent_clients").select("id,name,key_prefix,created_at,last_used_at,revoked_at")
-      .eq("user_id", auth.user.id).order("created_at", { ascending: false }),
+      .eq("user_id", auth.user.id).eq("auth_kind", "api_key").order("created_at", { ascending: false }),
     auth.supabase.from("capability_grants").select("principal_id,workspace_id,capability,constraints,granted_at")
       .eq("user_id", auth.user.id).is("revoked_at", null),
   ]);

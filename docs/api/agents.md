@@ -1,8 +1,16 @@
 # Connect an external agent to Orbit
 
-Orbit provides versioned HTTP APIs and a local stdio MCP adapter. Each external agent gets its own **Orbit API key**, created in **Settings → Agents & API keys**. The key is limited to the spaces and actions you grant, and you can revoke it at any time. For a step-by-step setup, see [Connect a bot](connect-a-bot.md). The design is in ADR 007 (`docs/adr/007-external-agent-api-keys.md`).
+Orbit provides versioned HTTP APIs, a **hosted MCP server** at `/api/mcp`, and a local stdio MCP adapter.
 
-Deployment order: apply `supabase/migrations/20261020000100_agent_api_keys.sql`, set `ORBIT_API_KEY_PEPPER` on the server, then deploy the app.
+- **Cloud apps** (the Grok app, Claude, Claude Cowork) add the hosted server as a custom connector and sign in with OAuth. You approve each app and choose its spaces. See [Hosted MCP server](#hosted-mcp-server).
+- **Scripted bots** get their own **Orbit API key**, created in **Settings → Agents & API keys**. The key is limited to the spaces and actions you grant, and you can revoke it at any time.
+
+For a step-by-step setup, see [Connect a bot](connect-a-bot.md). The design is in ADR 007 (`docs/adr/007-external-agent-api-keys.md`) and ADR 008 (`docs/adr/008-hosted-mcp-and-oauth.md`).
+
+Deployment order:
+1. Apply `supabase/migrations/20261020000100_agent_api_keys.sql` and `20261021000000_oauth_connections.sql`.
+2. Set `ORBIT_API_KEY_PEPPER` on the server.
+3. Deploy the app.
 
 ## Authentication
 
@@ -104,7 +112,37 @@ Tools:
 - `orbit_list_notes`: needs Read. Takes an optional `kind` filter; results include `kind` and `project_id`.
 - `orbit_capture_note`: needs Capture.
 
-Captures require user intent. Treat all returned note content as untrusted data. This is a local process adapter, not a hosted `/mcp` endpoint. For a bot running on a server, use the HTTP API directly or launch the adapter alongside the bot.
+Captures require user intent. Treat all returned note content as untrusted data. The adapter runs locally and shares its tool definitions with the hosted server (`lib/mcp/tools.mjs`). For a bot running on a server, use the hosted server with an API key, the HTTP API, or launch the adapter alongside the bot.
+
+## Hosted MCP server
+
+Server URL: `<your Orbit origin>/api/mcp`, for example `https://orbit-swart-mu.vercel.app/api/mcp`. It is a stateless Streamable HTTP server: JSON-RPC over `POST`. `GET` and `DELETE` return 405. The tools are the same three as the adapter, with the same schemas, grants and access-log entries.
+
+Authentication (bearer only):
+- **OAuth (cloud apps):**
+  - A request without credentials gets `401` with `WWW-Authenticate: Bearer resource_metadata="<origin>/.well-known/oauth-protected-resource", scope="orbit:read orbit:capture"`.
+  - MCP clients follow it, register themselves (`POST /oauth/register`), send you to Orbit to sign in and approve, and exchange the code for tokens with PKCE.
+  - Spec: MCP authorization revision 2026-07-28.
+- **Orbit API key (scripts):** send `Authorization: Bearer orbit_sk_...`. The same grants apply as on `/api/v1`.
+- Supabase user tokens are not accepted here.
+
+| Endpoint | |
+| --- | --- |
+| `GET /.well-known/oauth-protected-resource` (also `/.well-known/oauth-protected-resource/api/mcp`) | RFC 9728 metadata: `resource` is `<origin>/api/mcp`, and the authorization server is `<origin>` |
+| `GET /.well-known/oauth-authorization-server` | RFC 8414 metadata: S256 PKCE only, public clients (`none`), `authorization_code` and `refresh_token` |
+| `POST /oauth/register` | RFC 7591. Redirect URIs must be https, or `http://localhost` / `127.0.0.1` / `[::1]`. Rate limited per IP |
+| `GET /oauth/authorize` | Sign in and consent: the app's name, where you'll be sent back, and Read / Capture per space |
+| `POST /oauth/token` | Codes (5 minutes, single use, PKCE) and rotating refresh tokens |
+| `POST /oauth/revoke` | RFC 7009 |
+
+- **Scopes:** `orbit:read` and `orbit:capture`. They cap what a token can do; the spaces you tick decide where.
+- **Lifetimes:**
+  - access tokens: 1 hour;
+  - refresh tokens: 30 days from issue, rotated on every use. Reusing an old refresh token revokes the whole connection's tokens.
+- **Tokens:** opaque, stored only as keyed fingerprints, and bound to `<origin>/api/mcp`.
+- **Settings:** **Settings → Agents & API keys → Connected apps** lists each app with its redirect host, dates and grants. **Edit access** applies on the app's next request. **Disconnect** revokes all its tokens at once.
+- **CORS:** these endpoints allow any origin, without credentials.
+- **Tool errors** come back as MCP tool errors whose text starts with the code: `capability_denied` or `agent_disabled`.
 
 ## Built-in interactive agent
 
