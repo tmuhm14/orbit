@@ -96,6 +96,10 @@
     {
       "path": "/api/scheduler/tick/23",
       "schedule": "0 23 * * *"
+    },
+    {
+      "path": "/api/jobs/worker",
+      "schedule": "* * * * *"
     }
   ]
 }

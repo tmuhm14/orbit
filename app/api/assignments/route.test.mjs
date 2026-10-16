@@ -79,19 +79,22 @@ const server = loadTs(new URL("../../../lib/assignments/server.ts", import.meta.
   "@/lib/supabase/route-auth": routeAuth,
 });
 const validation = loadTs(new URL("../../../lib/assignments/validation.ts", import.meta.url), { "./transitions": transitions });
-// The built-in executor's kickoff (A-02): after() callbacks are collected, and
-// the run itself is a double that records the id. The real
-// queuedBuiltinAssignmentId() decides what to schedule.
-let scheduled, afterCallbacks;
+// The built-in executor's kickoff (A-02, A-04): the enqueue and the run are
+// doubles that record ids; after() callbacks are collected. The real
+// queuedBuiltinAssignment() decides what to enqueue.
+let scheduled, enqueued, afterCallbacks;
 beforeEach(() => {
   scheduled = [];
+  enqueued = [];
   afterCallbacks = [];
 });
 const executorServer = loadTs(new URL("../../../lib/assignments/executor-server.ts", import.meta.url), {
   "@/lib/supabase/admin": { createAdminClient: () => null },
   "@/lib/agent/server": { loadAgentSettings: async () => null },
   "@/lib/agent/providers": { createProvider: () => null },
-  "./executor": { EXECUTOR_WALL_CLOCK_MS: 240_000, executeAssignment: async () => ({ outcome: "skipped" }),
+  "@/lib/runtime/postgres": { postgresJobQueue: () => null },
+  "@/lib/runtime/worker": { runJobNow: async () => "not_claimed", workerId: () => "w" },
+  "./executor": { EXECUTOR_MIN_START_MS: 60_000, EXECUTOR_WALL_CLOCK_MS: 240_000, executeAssignment: async () => ({ outcome: "skipped" }),
     materialFromRows: () => null, previousArtifactId: () => null },
 });
 // U-05: save-document and availability. The real fromRow() maps the note.
@@ -116,7 +119,8 @@ const imports = {
   "@/lib/assignments/validation": validation,
   "@/lib/assignments/executor-server": {
     ...executorServer,
-    runQueuedAssignment: async (id, options) => (scheduled.push([id, typeof options.deadlineAt]), { outcome: "submitted" }),
+    enqueueAssignmentRun: async (a) => (enqueued.push([a.id, a.revision]), `job-${a.revision}`),
+    kickoffAssignmentRun: async (a, jobId, options) => (scheduled.push([a.id, jobId, typeof options.deadlineAt]), "completed"),
   },
 };
 const runAfter = async () => {
@@ -313,13 +317,14 @@ test("detail: children of one assignment, never the lease token", async () => {
 
 // --- Built-in executor kickoff (A-02) ---------------------------------------------------
 
-test("routes that queue built-in work schedule one background run with after()", async () => {
+test("routes that queue built-in work enqueue the run, then run that job with after()", async () => {
   assert.equal(collection.maxDuration, 300);
   for (const action of ["retry", "answer", "review"]) assert.equal(actions[action].maxDuration, 300);
   await create(validCreate);
+  assert.deepEqual(enqueued, [[ID, 1]], "the job exists before the response");
   assert.deepEqual(scheduled, [], "nothing runs before the response");
   await runAfter();
-  assert.deepEqual(scheduled, [[ID, "number"]]);
+  assert.deepEqual(scheduled, [[ID, "job-1", "number"]]);
 
   rpcResult = () => ({ data: { status: "saved", assignment: row({ state: "queued", revision: 3 }) }, error: null });
   await act("retry", { expectedRevision: 2 });
@@ -327,6 +332,9 @@ test("routes that queue built-in work schedule one background run with after()",
   await act("review", { expectedRevision: 2, artifactId: ART, decision: "request_changes", comment: "Shorter" });
   await runAfter();
   assert.deepEqual(scheduled.map((s) => s[0]), [ID, ID, ID, ID]);
+  // One idempotency key per revision: assignment:<id>:<revision>.
+  assert.deepEqual(enqueued, [[ID, 1], [ID, 3], [ID, 3], [ID, 3]]);
+  assert.deepEqual(scheduled.slice(1).map((s) => s[1]), ["job-3", "job-3", "job-3"]);
 });
 
 test("no run is scheduled for errors, non-queued results or cancel", async () => {
@@ -347,15 +355,17 @@ test("no run is scheduled for errors, non-queued results or cancel", async () =>
   assert.equal(actions.cancel.maxDuration, undefined);
   await runAfter();
   assert.deepEqual(scheduled, []);
+  assert.deepEqual(enqueued, []);
 });
 
-test("kickoff: reaps, then schedules the oldest queued built-in assignment in the workspace", async () => {
+test("kickoff: reaps, then enqueues and runs the oldest queued built-in assignment in the workspace", async () => {
   const ping = (body, options) => send(kickoff.POST, "/api/assignments/kickoff", { body, ...options });
   const r = await ping({ workspaceId: WS });
   assert.deepEqual([r.status, r.body], [202, { scheduled: 1 }]);
   assert.equal(calls[0][1], "reap_own_assignment_leases");
+  assert.deepEqual(enqueued, [[ID, 1]]);
   await runAfter();
-  assert.deepEqual(scheduled, [[ID, "number"]]);
+  assert.deepEqual(scheduled, [[ID, "job-1", "number"]]);
   tables.assignments = [row({ state: "running" })];
   assert.deepEqual((await ping({ workspaceId: WS })).body, { scheduled: 0 });
   for (const body of [{}, { workspaceId: "x" }, { workspaceId: WS, extra: 1 }, []])

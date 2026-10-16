@@ -8,13 +8,15 @@ import {
   readJsonBody,
 } from "@/lib/assignments/server";
 import {
-  queuedBuiltinAssignmentId,
+  enqueueAssignmentRun,
+  kickoffAssignmentRun,
+  queuedBuiltinAssignment,
   routeDeadline,
-  runQueuedAssignment,
 } from "@/lib/assignments/executor-server";
 
-// A built-in run queued here continues after the response, up to this limit
-// (ADR 005 tier 2; EXECUTOR_ROUTE_MAX_DURATION in executor-server.ts).
+// A built-in run queued here is enqueued as a durable job (ADR 006) and runs
+// after the response, up to this limit (EXECUTOR_ROUTE_MAX_DURATION in
+// executor-server.ts); the worker cron re-delivers it if this process is lost.
 export const maxDuration = 300;
 
 /**
@@ -41,10 +43,13 @@ export async function POST(
     p_answer: parsed.value.answer,
   });
   const response = error ? null : assignmentResultResponse(data);
-  const queued = response && queuedBuiltinAssignmentId(data);
+  const queued = response && queuedBuiltinAssignment(data);
   if (queued) {
+    // Enqueued before answering (the source of truth for recovery), then
+    // run at once after the response (the fast path).
     const startedAt = Date.now();
-    after(() => runQueuedAssignment(queued, { deadlineAt: routeDeadline(startedAt) }));
+    const jobId = await enqueueAssignmentRun(queued);
+    after(() => kickoffAssignmentRun(queued, jobId, { deadlineAt: routeDeadline(startedAt) }));
   }
   return response ?? assignmentError("save_failed");
 }
