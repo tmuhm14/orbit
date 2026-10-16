@@ -4,7 +4,7 @@ This guide gives a bot (a Grok, Claude or custom agent) its own Orbit key. The f
 
 ## 1. Turn on agent access for the space
 
-The bot can use only spaces whose **Allow the agent to read and change notes** switch is on. Turn it on in the space's settings. Turning it off later blocks every key in that space immediately.
+The bot can use only spaces whose **Allow the agent to read and change notes** switch is on. Turn it on in **Settings → Model & agent**. Turning it off later blocks every key in that space immediately.
 
 ## 2. Create a key
 

@@ -223,7 +223,7 @@ export function WorkspaceDialogs({
           onToast={onToast}
           onOpenSettings={() => {
             onCloseNote();
-            router.push("/settings");
+            router.push("/settings/model");
           }}
           onOpenAgent={() => {
             onCloseNote();
@@ -264,7 +264,7 @@ export function WorkspaceDialogs({
           onOpenAssignment={dialogs.setAssignmentId}
           onOpenSettings={() => {
             dialogs.setAssignmentId(null);
-            router.push("/settings");
+            router.push("/settings/model");
           }}
           onOpenAgent={() => {
             dialogs.setAssignmentId(null);
@@ -288,7 +288,7 @@ export function WorkspaceDialogs({
       {dialogs.scheduledOpen && (
         <ScheduledDialog
           onClose={dialogs.closeScheduled}
-          onOpenSettings={() => { dialogs.setScheduledOpen(false); router.push("/settings"); }}
+          onOpenSettings={() => { dialogs.setScheduledOpen(false); router.push("/settings/integrations"); }}
           onToast={onToast}
         />
       )}
