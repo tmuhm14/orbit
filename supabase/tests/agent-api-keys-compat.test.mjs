@@ -52,6 +52,9 @@ test("catalog: nothing existing changes; only the new tables and functions are a
   const before = await catalog(await database(MIGRATION));
   // This migration only: later migrations are checked by their own tests.
   const after = await catalog(await database(migrationFiles().find((f) => f > MIGRATION)));
+  // A-04's durable jobs migration sorts first, so it is in both databases.
+  assert.ok(migrationFiles().indexOf("20261020000000_durable_jobs.sql") < migrationFiles().indexOf(MIGRATION));
+  assert.ok(before.tables.length > 0 && before.functions.some((f) => /job/.test(f.k)), "before includes A-04's job functions");
   assert.ok(before.functions.length > 40);
   for (const key of ["triggers", "policies", "tables", "columns", "columnGrants", "constraints", "indexes"]) {
     assert.deepEqual(after[key].filter((r) => !onNewTable(r)), before[key], key);
@@ -177,7 +180,8 @@ async function scenario(until) {
 
 test("behavior: note, workspace and assignment paths give the same results before and after", { skip }, async () => {
   const before = await scenario(MIGRATION);
-  const after = await scenario();
+  // Earlier migrations (A-04 durable jobs included) are in both; only this one differs.
+  const after = await scenario(migrationFiles().find((f) => f > MIGRATION));
   assert.ok(before.out.length > 30);
   const result = (label) => before.out.find(([l]) => l === label)[1];
   assert.equal(result("assignment-create").status, "created");

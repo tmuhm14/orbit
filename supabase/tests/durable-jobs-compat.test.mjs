@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { as, createDb, migrate, skip } from "./harness.mjs";
+import { as, createDb, migrate, migrationFiles, skip } from "./harness.mjs";
 
 // A-04's migration is applied to production before the code that uses it.
 // Proof that it changes nothing for the deployed app:
@@ -64,7 +64,8 @@ async function catalog(db) {
 
 test("catalog: nothing existing changes; only the job tables and functions are added", { skip }, async () => {
   const before = await catalog(await database(MIGRATION));
-  const after = await catalog(await database());
+  // Up to and including this migration only: later migrations (A-05) have their own test.
+  const after = await catalog(await database(migrationFiles().find((f) => f > MIGRATION)));
   assert.ok(before.functions.length > 40);
   const isNew = (table) => NEW_TABLES.includes(table);
   assert.deepEqual(after.functions.filter((f) => !NEW_FUNCTIONS.includes(f.k)), before.functions);
