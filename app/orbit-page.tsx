@@ -6,9 +6,13 @@ import { NOTE_COLUMNS, fromRow, type NoteRow } from "@/lib/notes-db";
 import { loadWorkspaces } from "@/lib/workspaces-db";
 import { recordInitialLoadFailure } from "@/lib/initial-load";
 import { agentEncryptionKey } from "@/lib/agent/server";
-import { BUCKETS, type BucketId } from "@/lib/notes";
 
-export async function orbitPage(initialView = "overview", initialSearchOpen = false) {
+/**
+ * Signs in (or redirects to /login), loads spaces and notes, and renders the
+ * workspace shell. Used by app/(workspace)/layout.tsx; the shell reads the
+ * initial view (?view=, ?focus=search) from the URL itself.
+ */
+export async function orbitPage() {
   if (!authConfig()) redirect("/login");
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -22,9 +26,6 @@ export async function orbitPage(initialView = "overview", initialSearchOpen = fa
     .order("updated_at", { ascending: false })
     .returns<NoteRow[]>();
   if (error) recordInitialLoadFailure("notes", error);
-  const view = initialView === "all" || initialView === "completed" ||
-    BUCKETS.some((bucket) => bucket.id === initialView)
-    ? initialView as "all" | "completed" | BucketId : "overview";
   return (
     <Workspace
       key={user.id}
@@ -38,8 +39,6 @@ export async function orbitPage(initialView = "overview", initialSearchOpen = fa
       initialSlack={spaces?.slack ?? []}
       inboundDomain={process.env.RESEND_INBOUND_DOMAIN || null}
       agentAvailable={!!agentEncryptionKey()}
-      initialView={view}
-      initialSearchOpen={initialSearchOpen}
     />
   );
 }

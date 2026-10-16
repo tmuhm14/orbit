@@ -1,8 +1,5 @@
-import { orbitPage } from "./orbit-page";
-
-export default async function Home({ searchParams }: {
-  searchParams: Promise<{ view?: string; focus?: string }>;
-}) {
-  const { view, focus } = await searchParams;
-  return orbitPage(view, focus === "search");
+// The notes route (Home, buckets, All items, Completed, search). The
+// workspace shell in ./layout.tsx renders it from the URL (?view=, ?focus=).
+export default function Home() {
+  return null;
 }

@@ -1,5 +1,4 @@
-import { orbitPage } from "../orbit-page";
-
-export default async function AgentsPage() {
-  return orbitPage();
+// Rendered by the workspace shell (../layout.tsx) from the pathname.
+export default function AgentsPage() {
+  return null;
 }

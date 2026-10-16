@@ -1,6 +1,7 @@
 // Routes inside the signed-in workspace (U-03) and their URL parameters.
 // Everything a view filters on lives in the URL so links, reloads and the
 // browser's back/forward buttons restore it. Pure: no React, no Next.
+import { BUCKETS, type BucketId } from "./notes.ts";
 
 /** A page of the workspace shell. `id` is the decoded path segment. */
 export type WorkspaceRoute =
@@ -104,4 +105,12 @@ export function libraryHref({ tag = null, q = "" }: Partial<LibraryParams> = {})
   if (q.trim()) query.set("q", q.slice(0, LIBRARY_QUERY_MAX));
   const text = query.toString();
   return text ? `/library?${text}` : "/library";
+}
+
+// --- Notes route -----------------------------------------------------------
+
+/** The notes route's view from `?view=`: a bucket, all, completed, or Home. */
+export function parseNotesView(value: string | null | undefined): "overview" | "all" | "completed" | BucketId {
+  if (value === "all" || value === "completed") return value;
+  return BUCKETS.some((b) => b.id === value) ? (value as BucketId) : "overview";
 }

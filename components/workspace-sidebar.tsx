@@ -3,12 +3,15 @@
 import Link from "next/link";
 import {
   ArrowUpRight,
+  BookOpen,
   Bot,
   CalendarClock,
   CheckCircle2,
   Download,
+  Layers,
   LayoutGrid,
   List,
+  ListChecks,
   LogOut,
   Orbit,
   PanelLeftClose,
@@ -49,12 +52,18 @@ export function WorkspaceSidebar({
     settingsPage,
     scheduledPage,
     agentsPage,
+    route,
     navigate,
     exportNotes,
     openGuide,
   } = useWorkspaceShell();
   const dropProps = useBucketDropTargets();
-  const onRoute = !settingsPage && !scheduledPage && !agentsPage;
+  const onRoute = route.page === "notes";
+  const current = (active: boolean) => (active ? ("page" as const) : undefined);
+  const tasksPage = route.page === "tasks";
+  // A project's detail is part of Projects; a full-page item, of the Library.
+  const projectsPage = route.page === "projects" || route.page === "project";
+  const libraryPage = route.page === "library" || route.page === "item";
   return (
     <>
       {open && <div className="sidebar-backdrop" onClick={onClose} />}
@@ -79,6 +88,7 @@ export function WorkspaceSidebar({
         <nav aria-label="Main navigation">
           <button
             className={`nav-item ${onRoute && view === "overview" && !search ? "active" : ""}`}
+            aria-current={current(onRoute && view === "overview" && !search)}
             onClick={() => navigate("overview")}
           >
             <LayoutGrid size={18} />
@@ -87,12 +97,25 @@ export function WorkspaceSidebar({
           </button>
           <button
             className={`nav-item ${onRoute && view === "all" && !search ? "active" : ""}`}
+            aria-current={current(onRoute && view === "all" && !search)}
             onClick={() => navigate("all")}
           >
             <List size={18} />
             <span>All items</span>
             <span className="nav-count">{loaded ? activeNotes.length : "–"}</span>
           </button>
+          <Link className={`nav-item ${tasksPage ? "active" : ""}`} href="/tasks" onClick={onClose} aria-current={current(tasksPage)}>
+            <ListChecks size={18} />
+            <span>Tasks</span>
+          </Link>
+          <Link className={`nav-item ${projectsPage ? "active" : ""}`} href="/projects" onClick={onClose} aria-current={current(projectsPage)}>
+            <Layers size={18} />
+            <span>Projects</span>
+          </Link>
+          <Link className={`nav-item ${libraryPage ? "active" : ""}`} href="/library" onClick={onClose} aria-current={current(libraryPage)}>
+            <BookOpen size={18} />
+            <span>Library</span>
+          </Link>
           <div className="nav-label">
             YOUR BUCKETS <span>{BUCKETS.length}</span>
           </div>
@@ -102,6 +125,7 @@ export function WorkspaceSidebar({
               <button
                 key={b.id}
                 className={`nav-item ${onRoute && view === b.id && !search ? "active" : ""}`}
+                aria-current={current(onRoute && view === b.id && !search)}
                 onClick={() => navigate(b.id)}
                 {...dropProps(b.id)}
               >
@@ -114,6 +138,7 @@ export function WorkspaceSidebar({
           <div className="nav-divider" />
           <button
             className={`nav-item ${onRoute && view === "completed" ? "active" : ""}`}
+            aria-current={current(onRoute && view === "completed")}
             onClick={() => navigate("completed")}
           >
             <CheckCircle2 size={18} />
