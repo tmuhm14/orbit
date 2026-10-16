@@ -4899,3 +4899,45 @@ main.agents-page { max-width: 980px; padding-top: 40px; padding-bottom: 80px; di
   .agent-row:hover { transform: none; }
 }
 /* ===== End agents ===== */
+
+/* ===== Agent API keys (A-05): Settings → Agents & API keys ===== */
+.agent-keys-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 18px; }
+.agent-keys-create { border: 1px solid #ffffff12; background: #ffffff04; border-radius: 8px; padding: 17px; }
+.agent-keys-create h3 { display: inline-flex; align-items: center; gap: 6px; }
+.agent-keys-grid { width: 100%; border-collapse: collapse; font-size: 12px; }
+.agent-keys-grid th, .agent-keys-grid td { padding: 6px 4px; border-bottom: 1px solid #ffffff0b; text-align: center; }
+.agent-keys-grid th[scope="row"], .agent-keys-grid thead th:first-child { text-align: left; font-weight: 500; }
+.agent-keys-grid thead th { color: var(--muted); font-weight: 500; font-size: 11px; }
+.agent-keys-grid input { accent-color: var(--purple); }
+.agent-keys-off { color: var(--amber); font-weight: 400; font-size: 11px; }
+.agent-keys-clients h3, .agent-keys-log h3 { color: #d7c7e3; font-size: 13px; font-weight: 600; margin: 0 0 8px; }
+.agent-keys-clients ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.agent-keys-client { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; padding: 10px 0; border-bottom: 1px solid #ffffff0b; font-size: 12px; }
+.agent-keys-client.is-revoked { opacity: 0.6; }
+.agent-keys-client-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.agent-keys-client-name code { color: #c5b4db; font-size: 11px; }
+.agent-keys-client-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 4px; color: var(--muted); font-size: 11px; }
+.agent-keys-client-actions { display: flex; align-items: flex-start; gap: 10px; }
+.agent-keys-revoke { color: #e0a38e; }
+.agent-keys-edit { grid-column: 1 / -1; display: grid; gap: 10px; justify-items: start; }
+.agent-keys-revoked { margin-top: 10px; color: var(--muted); font-size: 12px; }
+.agent-keys-revoked summary { cursor: pointer; }
+.agent-keys-reveal { display: grid; gap: 9px; margin: 0 0 18px; padding: 14px; border: 1px solid #b09aeb55; border-radius: 8px; background: #b09aeb10; font-size: 12px; line-height: 1.5; }
+.agent-keys-reveal > button { justify-self: start; }
+.agent-keys-reveal-row { display: flex; align-items: center; gap: 8px; }
+.agent-keys-reveal-row code { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 6px; background: #111216; color: #e3d8f5; font-size: 12px; overflow-wrap: anywhere; user-select: all; }
+.agent-keys-log { margin-top: 22px; }
+.agent-keys-log-heading { display: flex; align-items: center; justify-content: space-between; }
+.agent-keys-events { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 10px; }
+.agent-keys-events th { color: var(--muted); font-weight: 500; font-size: 11px; text-align: left; padding: 6px 8px 6px 0; }
+.agent-keys-events td { padding: 7px 8px 7px 0; border-top: 1px solid #ffffff0b; }
+.agent-keys-events tr.is-denied td:last-child { color: #e0a38e; }
+@media (max-width: 900px) {
+  .agent-keys-layout { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .agent-keys-events thead { display: none; }
+  .agent-keys-events tr { display: grid; grid-template-columns: 1fr 1fr; padding: 6px 0; border-top: 1px solid #ffffff0b; }
+  .agent-keys-events td { border-top: 0; padding: 2px 0; }
+}
+/* ===== End agent API keys ===== */
