@@ -119,6 +119,9 @@ const server = loadTs(new URL("../../lib/assignments/executor-server.ts", import
   "@/lib/agent/providers": {
     createProvider: (id, key, model) => (providerKeys.push([id, key, model]), provider),
   },
+  // The durable-jobs paths (A-04) are tested in durable-jobs-assignments.test.mjs.
+  "@/lib/runtime/postgres": loadTs(new URL("../../lib/runtime/postgres.ts", import.meta.url)),
+  "@/lib/runtime/worker": loadTs(new URL("../../lib/runtime/worker.ts", import.meta.url)),
   "./executor": executor,
 });
 const run = (id, options) => server.runQueuedAssignment(id, options);
@@ -405,25 +408,4 @@ test("a duplicate kickoff does no duplicate work", { skip }, async () => {
   assert.deepEqual(await attempts(id), [{ attempt_number: 1, status: "succeeded", error_code: null }]);
   // A later kickoff for a finished assignment is a no-op too.
   assert.deepEqual(await run(id), { outcome: "skipped" });
-});
-
-test("recovery starts lost kickoffs: oldest first, one per workspace, after a grace period", { skip }, async () => {
-  // Earlier tests leave nothing queued for built-in execution except these.
-  await q("update public.workspaces set agent_enabled = false where id in (select workspace_id from public.assignments where state = 'queued')");
-  await sql("service_role", null, "select public.reap_assignment_leases() r");
-  const ws1 = await workspace();
-  const first = await delegate({ ws: ws1 });
-  const second = await delegate({ ws: ws1 });
-  const third = await delegate();
-  reset([submit(), submit()]);
-  const counts = await server.recoverQueuedAssignments(admin, { graceMs: 0, now: Date.now() + 1_000 });
-  assert.deepEqual(counts, { started: 2, submitted: 2 });
-  assert.equal((await assignment(first.id)).state, "needs_review");
-  assert.equal((await assignment(second.id)).state, "queued", "same workspace: next sweep");
-  assert.equal((await assignment(third.id)).state, "needs_review");
-  // Within the grace period nothing is started (the kickoff's own run claims first).
-  reset([submit()]);
-  assert.deepEqual(await server.recoverQueuedAssignments(admin, { graceMs: 60_000 }), { started: 0 });
-  assert.deepEqual(await server.recoverQueuedAssignments(admin, { graceMs: 0, now: Date.now() + 1_000 }), { started: 1, submitted: 1 });
-  assert.equal((await assignment(second.id)).state, "needs_review");
 });

@@ -1,6 +1,4 @@
-import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { recoverQueuedAssignments, routeDeadline } from "@/lib/assignments/executor-server";
 import { dueReportDate } from "@/lib/scheduled/schedule";
 import { runScheduledTask, type ScheduledTask } from "@/lib/scheduled/server";
 
@@ -13,38 +11,10 @@ export const runtime = "nodejs";
 // tick is harmless.
 const PURGE_SLOT = "03";
 
-// Assignment leases (ADR 003 §2): before durable execution, an expired lease
-// ends in failed/timed_out, and queued built-in work whose executor is
-// unavailable fails with executor_unavailable. Assignment reads reap the
-// caller's own rows; this daily slot is the backstop for everyone else.
-// Repeating it is harmless.
-const REAP_SLOT = "04";
-
-type Admin = NonNullable<ReturnType<typeof createAdminClient>>;
-
-async function reapAssignmentLeases(admin: Admin) {
-  try {
-    const { data, error } = await admin.rpc("reap_assignment_leases");
-    if (error) throw new Error("reap failed");
-    const counts = (data ?? {}) as { timedOut?: number; unavailable?: number };
-    return { timedOut: Number(counts.timedOut) || 0, unavailable: Number(counts.unavailable) || 0 };
-  } catch {
-    // Counts only; never ids or content.
-    console.error("assignment lease reap failed");
-    return null;
-  }
-}
-
-// Built-in assignments still queued after their kickoff was lost (A-02):
-// every tick starts a few of them in the background, after the response,
-// within this route's maxDuration. Counts only in logs.
-async function recoverAssignments(admin: Admin, startedAt: number) {
-  try {
-    await recoverQueuedAssignments(admin, { deadlineAt: routeDeadline(startedAt) });
-  } catch {
-    console.error("assignment recovery failed");
-  }
-}
+// Assignment leases and the recovery of queued built-in assignments run every
+// minute in the durable-jobs worker (/api/jobs/worker, ADR 006): it reaps
+// expired assignment leases and reconciles queued assignments with their
+// jobs, so this tick no longer does either.
 
 async function purgeAgentActionValues(admin: NonNullable<ReturnType<typeof createAdminClient>>) {
   try {
@@ -71,9 +41,6 @@ export async function GET(request: Request, { params }: { params: Promise<{ slot
   const admin = createAdminClient();
   if (!admin) return new Response("Unavailable", { status: 503 });
   const purged = slot === PURGE_SLOT ? await purgeAgentActionValues(admin) : undefined;
-  const reaped = slot === REAP_SLOT ? await reapAssignmentLeases(admin) : undefined;
-  const startedAt = now.getTime();
-  after(() => recoverAssignments(admin, startedAt));
   const { data: tasks, error } = await admin.from("scheduled_tasks")
     .select("id,user_id,name,kind,enabled,timezone,delivery_hour,cadence,jira_projects,github_repos,created_at")
     .eq("enabled", true).returns<ScheduledTask[]>();
@@ -93,6 +60,5 @@ export async function GET(request: Request, { params }: { params: Promise<{ slot
     completed,
     failed,
     ...(purged !== undefined ? { purged } : {}),
-    ...(reaped !== undefined ? { reaped } : {}),
   });
 }

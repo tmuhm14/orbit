@@ -116,8 +116,8 @@ The runtime has no user-facing API of its own. User-visible state is the owning 
 
 ## Open questions
 
-1. **Vercel plan limits** (max function duration, cron frequency and count, concurrency) for the production project. *Owner: Lead. Blocks: vendor decision, tick fan-out threshold.*
-2. **Do Waltz Azure standards (Service Bus, Key Vault) apply to Orbit?** *Decider: Tony.*
-3. **Runtime vendor** (follow-up ADR, using §4 criteria). *Decider: Tony. Blocks: A-04.*
+1. ~~**Vercel plan limits** (max function duration, cron frequency and count, concurrency) for the production project.~~ **Resolved:** the production plan is Pro (decided by Tony, 2026-10-15; ADR 006 §1, exact limits checked at deploy).
+2. ~~**Do Waltz Azure standards (Service Bus, Key Vault) apply to Orbit?**~~ **Resolved:** no; Service Bus is documented as a migration option only (decided by Tony, 2026-10-15; ADR 006 §1).
+3. ~~**Runtime vendor** (follow-up ADR, using §4 criteria).~~ **Resolved:** Postgres-backed (Supabase) jobs, no new vendor, with a documented path to Vercel Queues/Workflow, Inngest, Trigger.dev and Azure Service Bus (decided by Tony, 2026-10-15; ADR 006, `docs/runtime/migrating-durable-jobs.md`).
 4. **Retry policy for failed scheduled debriefs** (today's unique index blocks a same-day retry). *Decider: product.*
 5. **Should organizing runs move to tier 3** for automatic retries, or stay user-restartable? *Decider: Tony.*
