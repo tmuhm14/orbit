@@ -157,8 +157,8 @@ A-05 migration seeds grants so behavior is unchanged on day one:
 
 ## Open questions
 
-1. **External agent credential type:** Orbit-issued API keys (hashed, revocable), OAuth 2.1 (hosted MCP), or Supabase JWTs with server-side grants. *Decider: Tony. Blocks: A-05 ("auth ADR" in the plan should be a follow-up ADR once chosen).*
-2. **Deprecation window** for user-JWT `/api/v1` access. *Decider: Tony.*
-3. **Retention for `access_audit_events`.** Proposed: 90 days. *Decider: Tony.*
-4. **Should `item.write {update}` be grantable to external agents in v1** (it needs the ADR 002 expected-revision contract on a new v1 endpoint)? *Decider: Tony.*
-5. **Do Slack links and email inbox tokens become grants** (`item.write {create}` for a `connection` principal), or stay as their own mechanisms? Proposed: stay as is until I-01. *Owner: Integrations.*
+1. ~~**External agent credential type:** Orbit-issued API keys (hashed, revocable), OAuth 2.1 (hosted MCP), or Supabase JWTs with server-side grants.~~ **Resolved — decided by Tony, 2026-10-15:** Orbit-issued per-agent API keys. See [ADR 007](007-external-agent-api-keys.md).
+2. ~~**Deprecation window** for user-JWT `/api/v1` access.~~ **Resolved — decided by Tony, 2026-10-15:** no automatic sunset; user tokens stay accepted with a `Deprecation` header, and a sunset is scheduled only by setting `ORBIT_USER_TOKEN_SUNSET`. See [ADR 007](007-external-agent-api-keys.md#decisions-on-adr-004s-open-questions).
+3. ~~**Retention for `access_audit_events`.**~~ **Resolved — decided by Tony, 2026-10-15:** 90 days. See [ADR 007](007-external-agent-api-keys.md#decisions-on-adr-004s-open-questions).
+4. ~~**Should `item.write {update}` be grantable to external agents in v1**?~~ **Resolved — decided by Tony, 2026-10-15:** no, create-only in v1. See [ADR 007](007-external-agent-api-keys.md#decisions-on-adr-004s-open-questions).
+5. ~~**Do Slack links and email inbox tokens become grants**?~~ **Resolved — decided by Tony, 2026-10-15:** they stay separate mechanisms until I-01. See [ADR 007](007-external-agent-api-keys.md#decisions-on-adr-004s-open-questions).

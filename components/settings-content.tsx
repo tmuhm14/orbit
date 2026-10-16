@@ -8,6 +8,7 @@ import { PROVIDERS, type ProviderId } from "@/lib/agent/providers";
 import { WORKSPACE_COLORS, workspaceColor, type SlackConnection, type Workspace, type WorkspaceColor } from "@/lib/notes";
 import { sendScheduled, type ScheduledConnection } from "@/lib/scheduled/client";
 import { signOut } from "@/app/auth/actions";
+import { AgentKeysSettings } from "./agent-keys-settings";
 
 type AgentSettings = {
   provider: ProviderId;
@@ -226,6 +227,9 @@ export function SettingsContent({
           )}
           <div className="settings-card-footer"><span>Tokens are encrypted on the server and are never shown again.</span><button className="text-button" onClick={onOpenScheduled}>Manage scheduled jobs</button></div>
         </section>
+
+        {/* Connections → Agents & API keys (A-05). */}
+        <AgentKeysSettings workspaces={workspaces} onToast={onToast} />
 
         <section className="settings-card" aria-labelledby="settings-model">
           <div className="settings-card-heading"><div><h2 id="settings-model">Model provider</h2><p>Used by the organizing agent.</p></div></div>
