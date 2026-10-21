@@ -397,6 +397,33 @@ export function projectLinkError(
 }
 
 /**
+ * Adds a new top-level project in the item's workspace and links the item
+ * to it, in one change. Returns the link code instead when the link would be
+ * refused (for example a project item that would end up too deeply nested).
+ */
+export function withNewProject(
+  notes: Note[],
+  id: string,
+  title: string,
+): { notes: Note[]; projectId: string } | LinkErrorCode {
+  const item = notes.find((n) => n.id === id);
+  const name = title.trim();
+  if (!item || !name) return "invalid_project_link";
+  const project: Note = {
+    ...createNote(name, "projects", item.workspaceId),
+    kind: "project",
+  };
+  const next = [project, ...notes];
+  const error = projectLinkError(next, id, project.id);
+  if (error) return error;
+  const updatedAt = new Date().toISOString();
+  return {
+    projectId: project.id,
+    notes: next.map((n) => (n.id === id ? { ...n, projectId: project.id, updatedAt } : n)),
+  };
+}
+
+/**
  * Orders a batch so a new parent is saved before the items that link to it,
  * and unlinks before links. The server checks each item on its own.
  */

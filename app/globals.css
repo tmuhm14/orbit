@@ -4305,6 +4305,8 @@ main.home-focus {
 .project-option.is-refused strong { color: #9b8fa7; }
 .project-option-text .project-option-why { color: #e0b991; }
 .project-option-empty { padding: 9px 8px; font-size: 12px; color: #8c7f98; }
+.project-option.is-create { border-top: 1px solid #ffffff12; }
+.project-option.is-create strong, .project-option.is-create .project-option-check { color: var(--purple); }
 
 /* Follow-up check flags. */
 .followup-flag { padding: 2px 7px; border-radius: 999px; font-size: 11px; white-space: nowrap; }
