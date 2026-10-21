@@ -94,6 +94,7 @@ export function ProjectField({ note, api }: { note: Note; api: ItemApi }) {
           describedBy={describedBy}
           invalid={!!(error || serverError)}
           onSelect={(projectId) => setError(api.linkErrorFor(note.id, projectId) ?? api.setProject(note.id, projectId))}
+          onCreate={(title) => setError(api.createProject(note.id, title))}
         />
         {project && (
           <Link className="text-button property-link" href={projectHref(project.id)}>

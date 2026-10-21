@@ -24,6 +24,7 @@ import {
   restoreDrafts,
   revertUnlink,
   settleIdenticalConflicts,
+  withNewProject,
   withRestored,
   type ConflictInfo,
   type Followup,
@@ -627,6 +628,19 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
   }
 
   /**
+   * Creates a top-level project named `title` in the item's workspace and
+   * links the item to it. Returns a code instead of changing anything when
+   * the link would be refused.
+   */
+  function createProject(id: string, title: string): LinkErrorCode | null {
+    const result = withNewProject(notesRef.current, id, title);
+    if (typeof result === "string") return result;
+    notesRef.current = result.notes;
+    setNotes(result.notes);
+    return null;
+  }
+
+  /**
    * Deletes a note. A project with linked items is refused by the server and
    * restored here (see blockedDeletes) unless unlinkChildren, which moves its
    * direct items up to its parent project (or to no project).
@@ -826,6 +840,7 @@ export function useNotes(userId: string, initialNotes: Note[] | null) {
     // LINK_ERROR_MESSAGES from lib/notes for user-facing text.
     setKind,
     setProject,
+    createProject,
     deleteNote,
     /** Projects in a workspace, by title. */
     projectsFor: (workspaceId: string) => projectsIn(notes, workspaceId),

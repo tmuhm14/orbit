@@ -1,7 +1,7 @@
 "use client";
 
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, Plus } from "lucide-react";
 import type { Note } from "@/lib/notes";
 import {
   projectOptions,
@@ -9,20 +9,24 @@ import {
   type ProjectOption,
 } from "@/lib/item-properties";
 
-type Option = Omit<ProjectOption, "id"> & { id: string | null };
+type Option = Omit<ProjectOption, "id"> & { id: string | null; create?: boolean };
 const NONE: Option = { id: null, title: "None", parents: "", error: null };
+const CREATE_ID = "create-project";
 
 /**
  * Searchable project picker (ARIA 1.2 combobox with a listbox popup). Lists
  * projects in the item's workspace with their nesting path, plus "None".
  * Choosing an option that would be refused still calls onSelect so the
  * caller can show why (setProject returns the code without changing data).
+ * With onCreate, a search that names no existing project offers to create
+ * one with that name.
  */
 export function ProjectPicker({
   id,
   notes,
   item,
   onSelect,
+  onCreate,
   describedBy,
   invalid,
 }: {
@@ -30,6 +34,8 @@ export function ProjectPicker({
   notes: Note[];
   item: Note;
   onSelect: (projectId: string | null) => void;
+  /** Creates a project named `title` and links the item to it. */
+  onCreate?: (title: string) => void;
   describedBy?: string;
   invalid?: boolean;
 }) {
@@ -40,9 +46,12 @@ export function ProjectPicker({
   const listId = `${id}-list`;
   const options = useMemo<Option[]>(() => {
     const projects = projectOptions(notes, item, query);
-    const q = query.trim().toLowerCase();
-    return !q || "none".includes(q) ? [NONE, ...projects] : projects;
-  }, [notes, item, query]);
+    const name = query.trim();
+    const q = name.toLowerCase();
+    const list = !q || "none".includes(q) ? [NONE, ...projects] : projects;
+    if (!onCreate || !q || projects.some((p) => p.title.trim().toLowerCase() === q)) return list;
+    return [...list, { id: CREATE_ID, title: name, parents: "", error: null, create: true }];
+  }, [notes, item, query, onCreate]);
   const current = item.projectId
     ? projectPathLabel(notes, item.projectId) || "A project that isn’t loaded"
     : "None";
@@ -64,7 +73,8 @@ export function ProjectPicker({
   function choose(option: Option) {
     setOpen(false);
     setQuery("");
-    if (option.id !== (item.projectId ?? null)) onSelect(option.id);
+    if (option.create) onCreate?.(option.title);
+    else if (option.id !== (item.projectId ?? null)) onSelect(option.id);
   }
 
   return (
@@ -82,7 +92,7 @@ export function ProjectPicker({
           autoComplete="off"
           spellCheck={false}
           value={open ? query : current}
-          placeholder={open ? "Search projects…" : undefined}
+          placeholder={open ? (onCreate ? "Search or create a project…" : "Search projects…") : undefined}
           onClick={openList}
           onChange={(e) => {
             if (!open) setOpen(true);
@@ -140,7 +150,7 @@ export function ProjectPicker({
       >
         {options.length ? (
           options.map((option, index) => {
-            const chosen = option.id === (item.projectId ?? null);
+            const chosen = !option.create && option.id === (item.projectId ?? null);
             return (
               <li
                 key={option.id ?? "none"}
@@ -148,17 +158,20 @@ export function ProjectPicker({
                 role="option"
                 aria-selected={index === activeIndex}
                 aria-checked={chosen}
-                className={`project-option ${index === activeIndex ? "is-active" : ""} ${option.error ? "is-refused" : ""}`}
+                className={`project-option ${index === activeIndex ? "is-active" : ""} ${option.error ? "is-refused" : ""} ${option.create ? "is-create" : ""}`}
                 onMouseDown={(e) => e.preventDefault()}
                 onMouseMove={() => index !== activeIndex && setActive(index)}
                 onClick={() => choose(option)}
               >
                 <span className="project-option-check" aria-hidden="true">
                   {chosen && <Check size={13} />}
+                  {option.create && <Plus size={13} />}
                 </span>
                 <span className="project-option-text">
-                  <strong>{option.title}</strong>
-                  {option.id === null ? (
+                  <strong>{option.create ? `Create “${option.title}”` : option.title}</strong>
+                  {option.create ? (
+                    <small>New top-level project</small>
+                  ) : option.id === null ? (
                     <small>Not part of a project</small>
                   ) : option.parents ? (
                     <small>in {option.parents}</small>
