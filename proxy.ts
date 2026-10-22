@@ -42,6 +42,7 @@ export const config = {
     "/library",
     "/items/:path*",
     "/workflows/:path*",
+    "/jira",
     "/login",
     "/oauth/authorize",
     "/oauth/authorize/:path*",
@@ -51,6 +52,7 @@ export const config = {
     "/api/workspaces/:path*",
     "/api/scheduled-tasks/:path*",
     "/api/workflows/:path*",
+    "/api/jira/:path*",
     "/api/slack-links",
   ],
 };
