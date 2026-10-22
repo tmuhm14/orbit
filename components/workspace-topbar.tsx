@@ -31,7 +31,9 @@ export function WorkspaceTopbar({
       ? { href: "/projects", label: "Projects" }
       : route.page === "settings"
         ? { href: settingsHref(), label: "Settings" }
-        : null;
+        : route.page === "workflow"
+          ? { href: "/workflows", label: "Workflows" }
+          : null;
   const pageLabel =
     route.page === "tasks"
       ? "Tasks"
@@ -45,7 +47,11 @@ export function WorkspaceTopbar({
               ? settingsSection(route.section).label
             : route.page === "item"
               ? titleOf(route.id, "Untitled thought")
-              : null;
+              : route.page === "workflows"
+                ? "Workflows"
+                : route.page === "workflow"
+                  ? "Designer"
+                  : null;
   return (
     <header className="topbar">
       <div className="breadcrumb">

@@ -19,6 +19,7 @@ import {
   Search,
   Settings2,
   Sparkles,
+  Workflow,
 } from "lucide-react";
 import { BUCKETS } from "@/lib/notes";
 import { settingsHref } from "@/lib/settings-sections";
@@ -70,6 +71,7 @@ export function WorkspaceSidebar({
   // A project's detail is part of Projects; a full-page item, of the Library.
   const projectsPage = route.page === "projects" || route.page === "project";
   const libraryPage = route.page === "library" || route.page === "item";
+  const workflowsPage = route.page === "workflows" || route.page === "workflow";
   return (
     <>
       {open && <div className="sidebar-backdrop" onClick={onClose} />}
@@ -171,6 +173,10 @@ export function WorkspaceSidebar({
           <Link className={`nav-item ${agentsPage ? "active" : ""}`} aria-label="Agents" title="Agents" href="/agents" onClick={onClose} aria-current={agentsPage ? "page" : undefined}>
             <Bot size={18} />
             <span>Agents</span>
+          </Link>
+          <Link className={`nav-item ${workflowsPage ? "active" : ""}`} aria-label="Workflows" title="Workflows" href="/workflows" onClick={onClose} aria-current={current(workflowsPage)}>
+            <Workflow size={18} />
+            <span>Workflows</span>
           </Link>
           <Link className={`nav-item ${scheduledPage ? "active" : ""}`} aria-label="Scheduled jobs" title="Scheduled jobs" href="/scheduled" onClick={onClose} aria-current={scheduledPage ? "page" : undefined}>
             <CalendarClock size={18} />

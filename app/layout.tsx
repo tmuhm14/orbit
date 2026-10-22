@@ -4,6 +4,7 @@ import "./globals.css";
 import "./styles/settings.css";
 import "./styles/action-feedback.css";
 import "./styles/oauth.css";
+import "./styles/workflows.css";
 
 export const metadata: Metadata = {
   title: "Orbit — A little space for a clearer mind",
