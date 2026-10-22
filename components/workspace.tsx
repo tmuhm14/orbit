@@ -16,6 +16,8 @@ import type { Assignment } from "@/lib/assignments/types";
 import { itemHref, parseNotesView, parseRoute } from "@/lib/workspace-routes";
 import { settingsHref } from "@/lib/settings-sections";
 import { AgentsPage } from "./agents-page";
+import { WorkflowDesigner } from "./workflow-designer";
+import { WorkflowsPage } from "./workflows-page";
 import { ItemPage } from "./item-page";
 import { LibraryPage } from "./library-page";
 import { ProjectPage, ProjectsPage } from "./projects-page";
@@ -437,7 +439,7 @@ export function Workspace({
             onDelete={() => deleteItem(route.id)}
             onToast={setToast}
             onOpenAgent={() => dialogs.setAgentOpen(true)}
-          /> : agentsPage ? <AgentsPage /> : scheduledPage ? <ScheduledAudit onOpenScheduled={() => dialogs.setScheduledOpen(true)} refreshToken={dialogs.scheduledRefreshToken} /> : route.page === "settings" ? <SettingsContent
+          /> : route.page === "workflows" ? <WorkflowsPage /> : route.page === "workflow" ? <WorkflowDesigner key={route.id} id={route.id} /> : agentsPage ? <AgentsPage /> : scheduledPage ? <ScheduledAudit onOpenScheduled={() => dialogs.setScheduledOpen(true)} refreshToken={dialogs.scheduledRefreshToken} /> : route.page === "settings" ? <SettingsContent
             section={route.section}
             email={email}
             workspaces={spaces.workspaces}

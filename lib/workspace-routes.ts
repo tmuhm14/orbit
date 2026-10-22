@@ -14,7 +14,9 @@ export type WorkspaceRoute =
   | { page: "projects" }
   | { page: "project"; id: string }
   | { page: "library" }
-  | { page: "item"; id: string };
+  | { page: "item"; id: string }
+  | { page: "workflows" }
+  | { page: "workflow"; id: string };
 
 const STATIC: Record<string, WorkspaceRoute> = {
   "": { page: "notes" },
@@ -24,6 +26,7 @@ const STATIC: Record<string, WorkspaceRoute> = {
   tasks: { page: "tasks" },
   projects: { page: "projects" },
   library: { page: "library" },
+  workflows: { page: "workflows" },
 };
 
 function decode(segment: string): string | null {
@@ -46,9 +49,9 @@ export function parseRoute(pathname: string | null | undefined): WorkspaceRoute 
   // An unknown subpath has no page file (404); read it as the default.
   if (parts[0] === "settings")
     return { page: "settings", section: parseSettingsSection(parts.slice(1)) ?? DEFAULT_SETTINGS_SECTION };
-  if (parts.length === 2 && (parts[0] === "projects" || parts[0] === "items")) {
+  if (parts.length === 2 && (parts[0] === "projects" || parts[0] === "items" || parts[0] === "workflows")) {
     const id = decode(parts[1]) ?? "";
-    return parts[0] === "projects" ? { page: "project", id } : { page: "item", id };
+    return parts[0] === "projects" ? { page: "project", id } : parts[0] === "items" ? { page: "item", id } : { page: "workflow", id };
   }
   if (parts.length > 1) return { page: "notes" };
   return STATIC[parts[0] ?? ""] ?? { page: "notes" };
@@ -57,6 +60,8 @@ export function parseRoute(pathname: string | null | undefined): WorkspaceRoute 
 export const projectHref = (id: string) => `/projects/${encodeURIComponent(id)}`;
 /** Full-page reading and editing for any item. */
 export const itemHref = (id: string) => `/items/${encodeURIComponent(id)}`;
+/** The workflow designer. */
+export const workflowHref = (id: string) => `/workflows/${encodeURIComponent(id)}`;
 
 /** Read-only view of URLSearchParams (Next's ReadonlyURLSearchParams fits). */
 type Params = { get(name: string): string | null } | null | undefined;
