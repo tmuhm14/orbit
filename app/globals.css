@@ -5072,6 +5072,7 @@ main.item-page { max-width: 900px; padding-top: 28px; padding-bottom: 80px; }
   .sidebar-collapsed .search-trigger > span,
   .sidebar-collapsed .search-trigger > kbd,
   .sidebar-collapsed .nav-item > span,
+  .sidebar-collapsed .nav-item.active .nav-active-dot,
   .sidebar-collapsed .review-card > :not(.review-icon),
   .sidebar-collapsed .sidebar-export > span,
   .sidebar-collapsed .sidebar-export > svg:last-child,
