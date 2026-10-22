@@ -108,6 +108,7 @@ export function Workspace({
   const [search, setSearch] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [toast, setToast] = useToast();
   // Detail dialogs and Delegate report fresher copies; a new assignment or
   // revision bumps the version so the Agents page and Home reload.
@@ -391,11 +392,13 @@ export function Workspace({
   return (
     <WorkspaceShellProvider value={shell}>
       <div
-        className="app-shell"
+        className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
         style={spaceStyle(workspaceColor(spaces.workspaces, workspaceId))}
       >
         <WorkspaceSidebar
           open={sidebarOpen}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
           inert={covered}
           switcherProps={switcherProps}
           onSearch={openSearch}

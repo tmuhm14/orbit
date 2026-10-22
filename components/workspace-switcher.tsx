@@ -85,7 +85,7 @@ export function WorkspaceSwitcher({
       if (!anchor) return;
       const margin = 8;
       const width = Math.min(
-        variant === "pill" ? 280 : anchor.width + 40,
+        variant === "pill" ? 280 : Math.max(250, anchor.width + 40),
         window.innerWidth - margin * 2,
       );
       const top = Math.min(anchor.bottom + 6, window.innerHeight - margin);
@@ -178,6 +178,8 @@ export function WorkspaceSwitcher({
       ) : (
         <button
           className="workspace-switch"
+          aria-label={`Current workspace: ${current.name}. Switch workspace`}
+          title={`Switch workspace: ${current.name}`}
           aria-haspopup="true"
           aria-expanded={open}
           onClick={() => setOpen(!open)}

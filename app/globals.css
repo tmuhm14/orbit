@@ -5046,3 +5046,56 @@ main.item-page { max-width: 900px; padding-top: 28px; padding-bottom: 80px; }
   .tree-toggle svg { transition: none; }
 }
 /* ===== End work views ===== */
+
+/* The orbit mark keeps moving while the wordmark stays easy to read. */
+.brand-orbit {
+  flex-shrink: 0;
+  animation: brand-orbit-turn 24s linear infinite;
+}
+@keyframes brand-orbit-turn {
+  to { transform: rotate(360deg); }
+}
+.sidebar-brand-row { display: flex; align-items: center; gap: 4px; }
+.sidebar-brand-row .brand { min-width: 0; padding-left: 4px; gap: 6px; }
+.sidebar-brand-row .beta-label { font-size: 9px; padding: 2px 3px; }
+.sidebar-collapse-toggle { flex-shrink: 0; width: 28px; height: 32px; }
+@media (min-width: 701px) {
+  .sidebar { transition: width var(--motion-base) var(--ease-out), padding var(--motion-base); }
+  .app-shell > .main-shell { transition: margin-left var(--motion-base) var(--ease-out), box-shadow var(--motion-base); }
+  .sidebar-collapsed .sidebar { width: 76px; padding: 24px 12px 0; }
+  .sidebar-collapsed .main-shell { margin-left: 76px; }
+  .sidebar-collapsed .sidebar-brand-row { flex-direction: column; gap: 8px; }
+  .sidebar-collapsed .brand { justify-content: center; padding: 0; }
+  .sidebar-collapsed .brand > span,
+  .sidebar-collapsed .workspace-switch > div:nth-child(2),
+  .sidebar-collapsed .workspace-chevron,
+  .sidebar-collapsed .search-trigger > span,
+  .sidebar-collapsed .search-trigger > kbd,
+  .sidebar-collapsed .nav-item > span,
+  .sidebar-collapsed .review-card > :not(.review-icon),
+  .sidebar-collapsed .sidebar-export > span,
+  .sidebar-collapsed .sidebar-export > svg:last-child,
+  .sidebar-collapsed .account-signout > span,
+  .sidebar-collapsed .profile > div:not(.profile-avatar) { display: none; }
+  .sidebar-collapsed .workspace-switch-wrap { margin: 18px 0; }
+  .sidebar-collapsed .workspace-switch { justify-content: center; padding: 6px 0; }
+  .sidebar-collapsed .search-trigger,
+  .sidebar-collapsed .nav-item,
+  .sidebar-collapsed .sidebar-export,
+  .sidebar-collapsed .account-signout { justify-content: center; padding: 10px 0; min-height: 40px; }
+  .sidebar-collapsed .nav-label { height: 1px; overflow: hidden; font-size: 0; margin: 18px 10px 10px; background: var(--border); }
+  .sidebar-collapsed .nav-label > span { display: none; }
+  .sidebar-collapsed .nav-divider { margin: 10px; }
+  .sidebar-collapsed .sidebar-bottom { padding-top: 16px; }
+  .sidebar-collapsed .review-card { display: grid; place-items: center; padding: 12px 0; }
+  .sidebar-collapsed .review-icon { margin: 0; }
+  .sidebar-collapsed .profile { justify-content: center; padding: 16px 0; }
+  .sidebar-collapsed .profile-avatar { flex-shrink: 0; }
+}
+@media (max-width: 700px) {
+  .sidebar-collapse-toggle { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .brand-orbit { animation: none; }
+  .sidebar, .app-shell > .main-shell { transition: none; }
+}
