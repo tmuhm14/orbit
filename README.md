@@ -32,6 +32,7 @@ Open http://localhost:3000. Use `npm run build` for a production build, `npm sta
 - Multiple workspaces (e.g. Personal and Waltz) under one login: switch from the colored pill in the top bar or the sidebar card. Each workspace has its own color and can be set as the account's default in the switcher. The default opens after sign-in on any device. Each space has its own buckets, notes, tags, and search, and a note can be moved between spaces from the editor.
 - Email capture: each workspace has a private address; forwarded emails land in its Inbox.
 - Organizing agent with your own Anthropic, OpenAI, or xAI (Grok) key: triages Slack and email captures as they arrive, organizes a workspace on request or follows a typed instruction, and logs every change with one-click undo. Opt-in per workspace.
+- A Jira dashboard (**Jira** in the left navigation): issues assigned to you, what your team's projects moved lately, and what's coming up, read live from Jira.
 - Scheduled team debriefs from Jira and GitHub activity, with linked reports in Orbit. Existing accounts get an off-by-default 6 a.m. Central task for Specialty and Patient Management; add the exact GitHub repositories and connect read-only credentials to turn it on.
 - "Send to Orbit" Slack message shortcut that drops messages into the Inbox of the workspace that Slack is linked to.
 - Responsive layouts, keyboard shortcuts, and reduced-motion support.
@@ -139,6 +140,16 @@ Setup:
 1. Apply `supabase/migrations/20261010000000_agent.sql`.
 2. Set `AGENT_ENCRYPTION_KEY` in Vercel and `.env.local` (`openssl rand -base64 32`). Changing it makes saved keys unreadable; users then re-enter them.
 3. Background runs use `maxDuration = 300` on `/api/agent/runs` and 120 on the capture routes. That requires Vercel Fluid compute (the default for new projects). Runs that are cut off show as "Timed out".
+
+## Jira dashboard
+
+Open **Jira** in the left navigation. It uses the Jira connection saved under **Settings → Integrations** (no extra setup) and reads Jira live each time it loads, then every five minutes while the tab is visible. Issue summaries are shown in the browser, never stored in Orbit or sent to a model.
+
+- **Assigned to you**: your open issues, in progress first, then by priority.
+- **Coming up**: across the team's projects, issues that are overdue or due within two weeks, ready to ship (`Ready for Release`), not started in the current sprint, ready for development (`Ready for Development`), or planned for the next sprint. On a site without those two status names, those groups are left out.
+- **Team activity**: issues whose status changed, that were resolved, or that are in progress and were updated in the last 7, 14 or 30 days (`?days=`), split into completed and in motion, with a filter per person (`?person=`).
+
+"The team" is the projects of your open Jira assignments plus any project keys (such as `SPEC`, not names) on your scheduled debriefs. The route is `GET /api/jira/dashboard` (`lib/jira/dashboard.ts`); grouping lives in `lib/jira/view.ts`.
 
 ## Scheduled debriefs
 
