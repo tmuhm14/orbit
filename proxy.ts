@@ -51,6 +51,7 @@ export const config = {
     "/api/workspaces/:path*",
     "/api/scheduled-tasks/:path*",
     "/api/workflows/:path*",
+    "/api/workflow-runs/:path*",
     "/api/slack-links",
   ],
 };
