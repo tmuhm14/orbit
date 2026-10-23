@@ -6,6 +6,7 @@ import { itemKind, type Note, type Workspace } from "@/lib/notes";
 import { isActionable } from "@/lib/tasks-view";
 import { projectHref } from "@/lib/workspace-routes";
 import { NoteEditor } from "./note-editor";
+import { ItemWorkflowRuns } from "./workflow-runs";
 import { WorkEmpty, WorkHeader } from "./work-rows";
 import { useWorkspaceShell } from "./workspace-shell-context";
 
@@ -70,6 +71,7 @@ export function ItemPage({
         onOpenAgent={onOpenAgent}
         storageError={storageError}
       />
+      <ItemWorkflowRuns itemId={note.id} />
     </main>
   );
 }

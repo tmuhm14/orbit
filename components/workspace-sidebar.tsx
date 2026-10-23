@@ -71,7 +71,8 @@ export function WorkspaceSidebar({
   // A project's detail is part of Projects; a full-page item, of the Library.
   const projectsPage = route.page === "projects" || route.page === "project";
   const libraryPage = route.page === "library" || route.page === "item";
-  const workflowsPage = route.page === "workflows" || route.page === "workflow";
+  const workflowsPage = route.page === "workflows" || route.page === "workflow" ||
+    route.page === "workflow-runs" || route.page === "workflow-run";
   return (
     <>
       {open && <div className="sidebar-backdrop" onClick={onClose} />}

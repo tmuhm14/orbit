@@ -18,6 +18,7 @@ import { settingsHref } from "@/lib/settings-sections";
 import { AgentsPage } from "./agents-page";
 import { WorkflowDesigner } from "./workflow-designer";
 import { WorkflowsPage } from "./workflows-page";
+import { WorkflowRunPage, WorkflowRunsPage } from "./workflow-runs";
 import { ItemPage } from "./item-page";
 import { LibraryPage } from "./library-page";
 import { ProjectPage, ProjectsPage } from "./projects-page";
@@ -439,7 +440,7 @@ export function Workspace({
             onDelete={() => deleteItem(route.id)}
             onToast={setToast}
             onOpenAgent={() => dialogs.setAgentOpen(true)}
-          /> : route.page === "workflows" ? <WorkflowsPage /> : route.page === "workflow" ? <WorkflowDesigner key={route.id} id={route.id} /> : agentsPage ? <AgentsPage /> : scheduledPage ? <ScheduledAudit onOpenScheduled={() => dialogs.setScheduledOpen(true)} refreshToken={dialogs.scheduledRefreshToken} /> : route.page === "settings" ? <SettingsContent
+          /> : route.page === "workflows" ? <WorkflowsPage /> : route.page === "workflow" ? <WorkflowDesigner key={route.id} id={route.id} /> : route.page === "workflow-runs" ? <WorkflowRunsPage /> : route.page === "workflow-run" ? <WorkflowRunPage key={route.id} id={route.id} /> : agentsPage ? <AgentsPage /> : scheduledPage ? <ScheduledAudit onOpenScheduled={() => dialogs.setScheduledOpen(true)} refreshToken={dialogs.scheduledRefreshToken} /> : route.page === "settings" ? <SettingsContent
             section={route.section}
             email={email}
             workspaces={spaces.workspaces}

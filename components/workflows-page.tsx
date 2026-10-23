@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { LoaderCircle, Plus, Trash2, Workflow as WorkflowIcon } from "lucide-react";
+import { History, LoaderCircle, Plus, Trash2, Workflow as WorkflowIcon } from "lucide-react";
 import { WORKFLOW_TEMPLATES, validateWorkflow, runnable } from "@/lib/workflows/model";
-import { workflowHref } from "@/lib/workspace-routes";
+import { workflowHref, workflowRunsHref } from "@/lib/workspace-routes";
 import { WorkflowPreview } from "./workflow-graph";
 import { useWorkspaceWorkflows } from "./use-workflows";
 import { useWorkspaceShell } from "./workspace-shell-context";
@@ -49,6 +50,7 @@ export function WorkflowsPage() {
           <h1>Workflows</h1>
           <p>Chain agent tasks, conditions and approvals on a canvas, then test-run them step by step.</p>
         </div>
+        <Link className="wf-tool-text wf-header-link" href={workflowRunsHref()}><History size={14} /> Run history</Link>
       </header>
 
       <section aria-labelledby="wf-templates">

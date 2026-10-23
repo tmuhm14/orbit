@@ -35,6 +35,7 @@ import { useLocalToday } from "./due-items";
 import { useAssignmentIndex } from "./use-assignment-index";
 import { useAvailability } from "./use-assignment";
 import { ItemRow, TaskRow, WorkEmpty, WorkHeader } from "./work-rows";
+import { ItemWorkflowRuns } from "./workflow-runs";
 import { useWorkspaceShell } from "./workspace-shell-context";
 
 const projectTitle = (note: Pick<Note, "title">) => note.title.trim() || "Untitled project";
@@ -493,6 +494,8 @@ export function ProjectPage({ id }: { id: string }) {
           </p>
         )}
       </DetailSection>
+
+      <ItemWorkflowRuns itemId={project.id} />
 
       {delegating && (
         <DelegateDialog
