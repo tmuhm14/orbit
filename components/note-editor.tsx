@@ -1,10 +1,16 @@
 "use client";
 
-import { useEditor, EditorContent, type Editor } from "@tiptap/react";
+import {
+  useEditor,
+  useEditorState,
+  EditorContent,
+  type Editor,
+} from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
+import { TableKit } from "@tiptap/extension-table";
 import {
   useEffect,
   useId,
@@ -35,6 +41,7 @@ import {
   ArrowUpRight,
   ArrowLeft,
   Maximize2,
+  Table,
 } from "lucide-react";
 import {
   BUCKETS,
@@ -112,6 +119,17 @@ const commands = [
     detail: "A place for your snippets",
     icon: Code,
     run: (e: Editor) => e.chain().focus().toggleCodeBlock().run(),
+  },
+  {
+    name: "Table",
+    detail: "Line things up in rows and columns",
+    icon: Table,
+    run: (e: Editor) =>
+      e
+        .chain()
+        .focus()
+        .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
+        .run(),
   },
 ];
 
@@ -193,6 +211,7 @@ export function NoteEditor({
       }),
       TaskList,
       TaskItem.configure({ nested: true }),
+      TableKit.configure({ table: { resizable: true } }),
     ],
     content: note.content,
     immediatelyRender: false,
@@ -258,6 +277,11 @@ export function NoteEditor({
     if (JSON.stringify(editor.getJSON()) === JSON.stringify(note.content)) return;
     editor.commands.setContent(note.content, { emitUpdate: false });
   }, [editor, note.content]);
+  // The table controls show only while the cursor is in a table.
+  const inTable = useEditorState({
+    editor,
+    selector: ({ editor: e }) => e?.isActive("table") ?? false,
+  });
   // Render over the document rather than after its minimum-height content.
   // Coordinates stay relative to the dialog, including while it animates in.
   useLayoutEffect(() => {
@@ -667,10 +691,61 @@ export function NoteEditor({
               >
                 <Quote size={16} />
               </button>
+              <button
+                className={inTable ? "active" : ""}
+                onClick={() =>
+                  editor
+                    ?.chain()
+                    .focus()
+                    .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
+                    .run()
+                }
+                aria-label="Table"
+                title="Table"
+              >
+                <Table size={16} />
+              </button>
               <small>
                 Type <kbd>/</kbd> to explore
               </small>
             </div>
+            {inTable && (
+              <div className="table-toolbar" role="toolbar" aria-label="Table">
+                <button
+                  onClick={() => editor?.chain().focus().addRowAfter().run()}
+                >
+                  + Row
+                </button>
+                <button
+                  onClick={() => editor?.chain().focus().addColumnAfter().run()}
+                >
+                  + Column
+                </button>
+                <span />
+                <button
+                  onClick={() => editor?.chain().focus().deleteRow().run()}
+                >
+                  − Row
+                </button>
+                <button
+                  onClick={() => editor?.chain().focus().deleteColumn().run()}
+                >
+                  − Column
+                </button>
+                <span />
+                <button
+                  onClick={() => editor?.chain().focus().toggleHeaderRow().run()}
+                >
+                  Header row
+                </button>
+                <button
+                  className="table-toolbar-danger"
+                  onClick={() => editor?.chain().focus().deleteTable().run()}
+                >
+                  Delete table
+                </button>
+              </div>
+            )}
             <div className="editor-content-wrap">
               <EditorContent editor={editor} />
               {slash &&
