@@ -67,6 +67,22 @@ export function parseRoute(pathname: string | null | undefined): WorkspaceRoute 
 export const projectHref = (id: string) => `/projects/${encodeURIComponent(id)}`;
 /** Full-page reading and editing for any item. */
 export const itemHref = (id: string) => `/items/${encodeURIComponent(id)}`;
+/**
+ * The item id a link points at, when it is this app's own item page
+ * (`origin` + itemHref). Any other URL, host or page is null, so a note
+ * can tell its own links from the web's.
+ */
+export function itemIdFromUrl(href: string, origin: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(href, origin);
+  } catch {
+    return null;
+  }
+  if (url.origin !== origin) return null;
+  const route = parseRoute(url.pathname);
+  return route.page === "item" && route.id ? route.id : null;
+}
 /** The workflow designer. */
 export const workflowHref = (id: string) => `/workflows/${encodeURIComponent(id)}`;
 /** One workflow run's details. */

@@ -42,6 +42,7 @@ import {
   ArrowLeft,
   Maximize2,
   Table,
+  Link2,
 } from "lucide-react";
 import {
   BUCKETS,
@@ -53,6 +54,7 @@ import {
   type Workspace,
 } from "@/lib/notes";
 import { KIND_LABELS, workspaceMoveError } from "@/lib/item-properties";
+import { itemHref, itemIdFromUrl } from "@/lib/workspace-routes";
 import { isAgentResult } from "@/lib/projects-view";
 import { ConflictBanner, ReloadBanner } from "./conflict-banner";
 import {
@@ -203,9 +205,16 @@ export function NoteEditor({
   onUpdateRef.current = onUpdate;
   const menuRef = useRef({ slash, commandIndex });
   menuRef.current = { slash, commandIndex };
+  // Links to other items open in the app; the editor is created once, so
+  // read the latest callback and notes through refs.
+  const onOpenNoteRef = useRef(onOpenNote);
+  onOpenNoteRef.current = onOpenNote;
+  const notesRef = useRef(api.notes);
+  notesRef.current = api.notes;
   const editor = useEditor({
     extensions: [
-      StarterKit,
+      // Clicks are handled below so links to other items stay in the app.
+      StarterKit.configure({ link: { openOnClick: false } }),
       Placeholder.configure({
         placeholder: "Let your thoughts land here. Type / for commands…",
       }),
@@ -221,6 +230,42 @@ export function NoteEditor({
         "aria-label": "Note content",
         role: "textbox",
         "aria-multiline": "true",
+      },
+      // A link to another item opens that item here; anything else opens
+      // in a new tab, as the link extension would.
+      handleClick: (view, _pos, event) => {
+        if (event.button !== 0 || !(event.target instanceof Element)) return false;
+        const link = event.target.closest("a");
+        if (!link || !view.dom.contains(link)) return false;
+        const href = link.getAttribute("href");
+        if (!href) return false;
+        event.preventDefault();
+        const id = itemIdFromUrl(href, window.location.origin);
+        if (id) {
+          if (id !== note.id) onOpenNoteRef.current(id);
+        } else window.open(link.href, "_blank", "noopener,noreferrer");
+        return true;
+      },
+      // Pasting a link to another item shows that item's title, not its URL.
+      handlePaste: (view, event) => {
+        const text = event.clipboardData?.getData("text/plain").trim();
+        if (!text || /\s/.test(text)) return false;
+        const id = itemIdFromUrl(text, window.location.origin);
+        if (!id) return false;
+        const target = notesRef.current.find((n) => n.id === id);
+        if (!target) return false;
+        const label = target.title.trim() || "Untitled thought";
+        const linkType = view.state.schema.marks.link;
+        if (!linkType) return false;
+        const { from, to } = view.state.selection;
+        view.dispatch(
+          view.state.tr.replaceWith(
+            from,
+            to,
+            view.state.schema.text(label, [linkType.create({ href: text })]),
+          ),
+        );
+        return true;
       },
       handleKeyDown: (view, event) => {
         const state = menuRef.current;
@@ -395,6 +440,17 @@ export function NoteEditor({
   const filtered = commands.filter((c) =>
     c.name.toLowerCase().includes(slash?.query.toLowerCase() || ""),
   );
+  function copyLink() {
+    const url = new URL(itemHref(note.id), window.location.origin).toString();
+    if (!navigator.clipboard?.writeText) {
+      onToast("Couldn’t copy the link in this browser");
+      return;
+    }
+    navigator.clipboard.writeText(url).then(
+      () => onToast("Link copied"),
+      () => onToast("Couldn’t copy the link"),
+    );
+  }
   function addTag() {
     const value = tag.trim().replace(/^#/, "");
     if (value && !note.tags.includes(value))
@@ -449,6 +505,15 @@ export function NoteEditor({
                   ? "Not saved yet — retrying"
                   : "Synced to your account"}
           </span>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={copyLink}
+            aria-label="Copy link"
+            title="Copy link to this page"
+          >
+            <Link2 size={16} />
+          </button>
           {!page && onOpenFullPage && (
             <button
               type="button"
