@@ -1802,6 +1802,35 @@ main {
   color: #9171a5;
   margin: 0 3px;
 }
+.table-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  align-items: center;
+  margin: -9px 0 17px;
+  font-size: 12px;
+}
+.table-toolbar button {
+  padding: 4px 8px;
+  border-radius: 4px;
+  color: #9e8cad;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.table-toolbar button:hover {
+  background: #b395d01a;
+  color: #ceb6e3;
+}
+.table-toolbar button.table-toolbar-danger:hover {
+  background: #e6a6b114;
+  color: #e6a6b1;
+}
+.table-toolbar > span {
+  height: 15px;
+  width: 1px;
+  background: #ffffff10;
+  margin: 0 5px;
+}
 .editor-content-wrap {
   position: relative;
 }
@@ -1873,6 +1902,56 @@ main {
 .note-prose a {
   color: #c6a4e3;
   text-decoration: underline;
+}
+.note-prose .tableWrapper {
+  overflow-x: auto;
+  margin: 20px 0;
+}
+.note-prose table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+.note-prose td,
+.note-prose th {
+  position: relative;
+  border: 1px solid #aa8ec528;
+  padding: 7px 10px;
+  min-width: 48px;
+  vertical-align: top;
+  box-sizing: border-box;
+}
+.note-prose th {
+  background: #b192cf14;
+  color: #d7c8e2;
+  font-weight: 600;
+  text-align: left;
+}
+.note-prose td > p,
+.note-prose th > p {
+  margin: 0;
+}
+.note-prose .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #b091ce2e;
+  pointer-events: none;
+  z-index: 2;
+}
+.note-prose .column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  bottom: -2px;
+  width: 4px;
+  background: #b091ce;
+  pointer-events: none;
+}
+.note-prose.resize-cursor {
+  cursor: col-resize;
 }
 .note-prose ul[data-type="taskList"] {
   list-style: none;
@@ -5005,11 +5084,17 @@ main.work-page { max-width: 980px; padding-top: 40px; padding-bottom: 80px; disp
 .library-search:focus-within { border-color: #b09aeb66; }
 .library-search input::-webkit-search-cancel-button { display: none; }
 
-/* Full-page item: the dialog editor in the page flow. */
-main.item-page { max-width: 900px; padding-top: 28px; padding-bottom: 80px; }
-.editor-dialog.is-page { width: 100%; height: auto; max-height: none; overflow: visible; box-shadow: none; animation: none; }
+/* Full-page item: the dialog editor in the page flow. The page fills the
+   content area (no card), every band shares one inline edge, and the
+   document keeps a reading-width column centered under the cover. */
+main.item-page { --page-inline: 40px; max-width: none; padding: 0 0 80px; }
+.editor-dialog.is-page { width: 100%; height: auto; max-height: none; overflow: visible; box-shadow: none; animation: none; border: 0; border-radius: 0; background: transparent; }
 .editor-dialog.is-page .editor-scroll { overflow: visible; }
-.editor-dialog.is-page .editor-footer { position: sticky; bottom: 0; background: #19161e; border-radius: 0 0 13px 13px; }
+.editor-dialog.is-page .editor-topbar,
+.editor-dialog.is-page .editor-cover,
+.editor-dialog.is-page .editor-footer { padding-inline: var(--page-inline); }
+.editor-dialog.is-page .editor-document { box-sizing: border-box; width: 100%; max-width: 1100px; margin-inline: auto; padding: 32px var(--page-inline) 45px; }
+.editor-dialog.is-page .editor-footer { position: sticky; bottom: 0; background: var(--bg, #19161e); border-radius: 0; }
 .editor-back { flex: none; margin-left: -10px; }
 .property-link { display: inline-flex; align-items: center; gap: 3px; margin-top: 4px; font-size: 12px; color: #c9b6ee; text-decoration: none; }
 .property-link:hover { text-decoration: underline; }
@@ -5019,7 +5104,7 @@ main.item-page { max-width: 900px; padding-top: 28px; padding-bottom: 80px; }
 
 @media (max-width: 700px) {
   main.work-page { padding: 24px 18px 60px; gap: 18px; }
-  main.item-page { padding: 12px 10px 60px; }
+  main.item-page { padding: 0 0 60px; }
   .work-header { flex-wrap: wrap; gap: 12px; }
   .work-header h1 { font-size: 26px; }
   .work-mark { width: 42px; height: 42px; }
@@ -5030,8 +5115,8 @@ main.item-page { max-width: 900px; padding-top: 28px; padding-bottom: 80px; }
   .project-row { padding-left: calc(6px + var(--depth) * 14px); }
   .project-counts { flex-basis: 100%; padding-left: 34px; }
   .project-row.is-flat .project-counts { padding-left: 0; }
-  .editor-dialog.is-page .editor-document { padding: 22px 18px 32px; }
-  .editor-dialog.is-page .editor-cover { padding: 0 18px; }
+  main.item-page { --page-inline: 18px; }
+  .editor-dialog.is-page .editor-document { padding: 22px var(--page-inline) 32px; }
   .breadcrumb-parent { display: none; }
 }
 /* Touch: every control here is at least 44px. */
@@ -5072,6 +5157,7 @@ main.item-page { max-width: 900px; padding-top: 28px; padding-bottom: 80px; }
   .sidebar-collapsed .search-trigger > span,
   .sidebar-collapsed .search-trigger > kbd,
   .sidebar-collapsed .nav-item > span,
+  .sidebar-collapsed .nav-item.active .nav-active-dot,
   .sidebar-collapsed .review-card > :not(.review-icon),
   .sidebar-collapsed .sidebar-export > span,
   .sidebar-collapsed .sidebar-export > svg:last-child,

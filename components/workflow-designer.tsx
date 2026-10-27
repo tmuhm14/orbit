@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useSearchParams } from "next/navigation";
 import {
-  ArrowLeft, Bot, Check, CircleAlert, Cloud, CloudOff, FilePlus2, Flag, GitBranch, LoaderCircle,
+  ArrowLeft, Bot, Check, CircleAlert, Cloud, CloudOff, FilePlus2, Flag, GitBranch, History, LoaderCircle,
   Maximize2, Play, Square, Timer, Trash2, TriangleAlert, UserCheck, X, Zap, ZoomIn, ZoomOut, type LucideIcon,
 } from "lucide-react";
 import {
@@ -12,8 +13,11 @@ import {
   type NodeKind, type Workflow, type WorkflowDefinition, type WorkflowIssue, type WorkflowNode,
 } from "@/lib/workflows/model";
 import { runWorkflow, type RunOutcome, type StepRecord } from "@/lib/workflows/engine";
+import { recordFromOutcome } from "@/lib/workflows/runs";
 import { NODE_H, NODE_W, bounds, edgeMidpoint, edgePath, inputPoint, outputPoint } from "./workflow-graph";
 import { WorkflowRequestError, sendWorkflow } from "./use-workflows";
+import { WorkflowRunsPanel } from "./workflow-runs";
+import { untitled } from "./work-rows";
 import { useWorkspaceShell } from "./workspace-shell-context";
 
 export const KIND_ICONS: Record<NodeKind, LucideIcon> = {
@@ -63,7 +67,8 @@ function nodeSummary(node: WorkflowNode) {
 
 /** /workflows/[id]: the canvas designer, autosaving against the read revision. */
 export function WorkflowDesigner({ id }: { id: string }) {
-  const { showToast } = useWorkspaceShell();
+  const { showToast, notes } = useWorkspaceShell();
+  const itemParam = useSearchParams().get("item");
   const [loadState, setLoadState] = useState<"loading" | "ready" | "missing" | "error">("loading");
   const [name, setName] = useState("");
   const [definition, setDefinition] = useState<WorkflowDefinition>({ version: 1, nodes: [], edges: [] });
@@ -75,6 +80,10 @@ export function WorkflowDesigner({ id }: { id: string }) {
   const [drag, setDrag] = useState<Drag | null>(null);
   const [run, setRun] = useState<RunState | null>(null);
   const [testInput, setTestInput] = useState("");
+  // The item a test run starts from (?item=, from an item page), if it's here.
+  const [sourceItemId, setSourceItemId] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [runsVersion, setRunsVersion] = useState(0);
   const revision = useRef(0);
   const canvasRef = useRef<HTMLDivElement>(null);
   const saving = useRef(false);
@@ -290,11 +299,30 @@ export function WorkflowDesigner({ id }: { id: string }) {
 
   // --- Test run ---------------------------------------------------------------
 
+  // Selecting a step brings its inspector back over the history panel.
+  useEffect(() => {
+    if (selection) setHistoryOpen(false);
+  }, [selection]);
+
+  const sourceItem = sourceItemId ? notes.find((n) => n.id === sourceItemId) : undefined;
+  // Applied once per ?item= value, so Clear sticks.
+  const appliedItem = useRef<string | null>(null);
+  useEffect(() => {
+    const note = itemParam ? notes.find((n) => n.id === itemParam) : undefined;
+    if (!note || appliedItem.current === note.id) return;
+    appliedItem.current = note.id;
+    setSourceItemId(note.id);
+    setTestInput(note.plainText.slice(0, 2000));
+  }, [itemParam, notes]);
+
   async function startRun() {
     if (!ready || running) return;
     canceled.current = false;
     setSelection(null);
+    setHistoryOpen(false);
     setRun({ steps: [], outcome: null, approval: null });
+    const startedAt = Date.now();
+    const ran = definition;
     const outcome = await runWorkflow(
       definition,
       {
@@ -332,6 +360,13 @@ export function WorkflowDesigner({ id }: { id: string }) {
       },
     );
     setRun((r) => r && { ...r, steps: outcome.steps, outcome, approval: null });
+    try {
+      await sendWorkflow("/api/workflow-runs", "POST",
+        recordFromOutcome(id, ran, outcome, { startedAt, finishedAt: Date.now(), sourceItemId: sourceItem ? sourceItemId : null }));
+      setRunsVersion((v) => v + 1);
+    } catch {
+      showToast("This run couldn’t be saved to history");
+    }
   }
 
   function stopRun() {
@@ -544,6 +579,17 @@ export function WorkflowDesigner({ id }: { id: string }) {
             : warnings.length ? <><TriangleAlert size={13} /> {warnings.length} notes</>
               : <><Check size={13} /> Valid</>}
         </span>
+        <button
+          type="button"
+          className={`wf-tool ${historyOpen ? "is-active" : ""}`}
+          aria-label="Run history"
+          aria-pressed={historyOpen}
+          title="Run history"
+          disabled={!!run}
+          onClick={() => setHistoryOpen((open) => !open)}
+        >
+          <History size={15} />
+        </button>
         {running ? (
           <button type="button" className="wf-run is-stop" onClick={stopRun}><Square size={13} /> Stop</button>
         ) : (
@@ -606,7 +652,19 @@ export function WorkflowDesigner({ id }: { id: string }) {
       </aside>
 
       {/* Inspector */}
-      {!run && (
+      {!run && historyOpen && (
+        <aside className="wf-inspector wf-float" aria-label="Run history">
+          <div className="wf-inspector-body">
+            <div className="wf-panel-head">
+              <div className="wf-panel-title">Run history</div>
+              <button type="button" className="wf-tool" aria-label="Close run history" onClick={() => setHistoryOpen(false)}><X size={15} /></button>
+            </div>
+            <WorkflowRunsPanel workflowId={id} version={runsVersion} />
+          </div>
+        </aside>
+      )}
+
+      {!run && !historyOpen && (
         <aside className="wf-inspector wf-float" aria-label="Inspector">
           {selectedNode ? (
             <NodeInspector
@@ -651,6 +709,15 @@ export function WorkflowDesigner({ id }: { id: string }) {
               ) : (
                 <p className="wf-ok"><Check size={14} /> Ready for a test run.</p>
               )}
+              {sourceItem && (
+                <p className="wf-muted wf-source-item">
+                  From “{untitled(sourceItem)}”
+                  <button type="button" className="wf-tool-text" onClick={() => {
+                    setSourceItemId(null);
+                    setTestInput("");
+                  }}>Clear</button>
+                </p>
+              )}
               <label className="wf-field">
                 <span>Test input</span>
                 <textarea
@@ -679,7 +746,7 @@ export function WorkflowDesigner({ id }: { id: string }) {
                 <button type="button" className="wf-tool" aria-label="Close test run" onClick={() => setRun(null)}><X size={15} /></button>
               )}
             </div>
-            <p className="wf-muted">Agents are simulated and nothing is saved. Approvals wait for you.</p>
+            <p className="wf-muted">Agents are simulated and no items change. Approvals wait for you; the run is kept in history.</p>
             <ol className="wf-trace">
               {run.steps.map((step, index) => {
                 const node = byId.get(step.nodeId);

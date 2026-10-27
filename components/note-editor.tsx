@@ -1,10 +1,16 @@
 "use client";
 
-import { useEditor, EditorContent, type Editor } from "@tiptap/react";
+import {
+  useEditor,
+  useEditorState,
+  EditorContent,
+  type Editor,
+} from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
+import { TableKit } from "@tiptap/extension-table";
 import {
   useEffect,
   useId,
@@ -35,6 +41,8 @@ import {
   ArrowUpRight,
   ArrowLeft,
   Maximize2,
+  Table,
+  Link2,
 } from "lucide-react";
 import {
   BUCKETS,
@@ -46,6 +54,7 @@ import {
   type Workspace,
 } from "@/lib/notes";
 import { KIND_LABELS, workspaceMoveError } from "@/lib/item-properties";
+import { itemHref, itemIdFromUrl } from "@/lib/workspace-routes";
 import { isAgentResult } from "@/lib/projects-view";
 import { ConflictBanner, ReloadBanner } from "./conflict-banner";
 import {
@@ -112,6 +121,17 @@ const commands = [
     detail: "A place for your snippets",
     icon: Code,
     run: (e: Editor) => e.chain().focus().toggleCodeBlock().run(),
+  },
+  {
+    name: "Table",
+    detail: "Line things up in rows and columns",
+    icon: Table,
+    run: (e: Editor) =>
+      e
+        .chain()
+        .focus()
+        .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
+        .run(),
   },
 ];
 
@@ -185,14 +205,22 @@ export function NoteEditor({
   onUpdateRef.current = onUpdate;
   const menuRef = useRef({ slash, commandIndex });
   menuRef.current = { slash, commandIndex };
+  // Links to other items open in the app; the editor is created once, so
+  // read the latest callback and notes through refs.
+  const onOpenNoteRef = useRef(onOpenNote);
+  onOpenNoteRef.current = onOpenNote;
+  const notesRef = useRef(api.notes);
+  notesRef.current = api.notes;
   const editor = useEditor({
     extensions: [
-      StarterKit,
+      // Clicks are handled below so links to other items stay in the app.
+      StarterKit.configure({ link: { openOnClick: false } }),
       Placeholder.configure({
         placeholder: "Let your thoughts land here. Type / for commands…",
       }),
       TaskList,
       TaskItem.configure({ nested: true }),
+      TableKit.configure({ table: { resizable: true } }),
     ],
     content: note.content,
     immediatelyRender: false,
@@ -202,6 +230,42 @@ export function NoteEditor({
         "aria-label": "Note content",
         role: "textbox",
         "aria-multiline": "true",
+      },
+      // A link to another item opens that item here; anything else opens
+      // in a new tab, as the link extension would.
+      handleClick: (view, _pos, event) => {
+        if (event.button !== 0 || !(event.target instanceof Element)) return false;
+        const link = event.target.closest("a");
+        if (!link || !view.dom.contains(link)) return false;
+        const href = link.getAttribute("href");
+        if (!href) return false;
+        event.preventDefault();
+        const id = itemIdFromUrl(href, window.location.origin);
+        if (id) {
+          if (id !== note.id) onOpenNoteRef.current(id);
+        } else window.open(link.href, "_blank", "noopener,noreferrer");
+        return true;
+      },
+      // Pasting a link to another item shows that item's title, not its URL.
+      handlePaste: (view, event) => {
+        const text = event.clipboardData?.getData("text/plain").trim();
+        if (!text || /\s/.test(text)) return false;
+        const id = itemIdFromUrl(text, window.location.origin);
+        if (!id) return false;
+        const target = notesRef.current.find((n) => n.id === id);
+        if (!target) return false;
+        const label = target.title.trim() || "Untitled thought";
+        const linkType = view.state.schema.marks.link;
+        if (!linkType) return false;
+        const { from, to } = view.state.selection;
+        view.dispatch(
+          view.state.tr.replaceWith(
+            from,
+            to,
+            view.state.schema.text(label, [linkType.create({ href: text })]),
+          ),
+        );
+        return true;
       },
       handleKeyDown: (view, event) => {
         const state = menuRef.current;
@@ -258,6 +322,11 @@ export function NoteEditor({
     if (JSON.stringify(editor.getJSON()) === JSON.stringify(note.content)) return;
     editor.commands.setContent(note.content, { emitUpdate: false });
   }, [editor, note.content]);
+  // The table controls show only while the cursor is in a table.
+  const inTable = useEditorState({
+    editor,
+    selector: ({ editor: e }) => e?.isActive("table") ?? false,
+  });
   // Render over the document rather than after its minimum-height content.
   // Coordinates stay relative to the dialog, including while it animates in.
   useLayoutEffect(() => {
@@ -371,6 +440,17 @@ export function NoteEditor({
   const filtered = commands.filter((c) =>
     c.name.toLowerCase().includes(slash?.query.toLowerCase() || ""),
   );
+  function copyLink() {
+    const url = new URL(itemHref(note.id), window.location.origin).toString();
+    if (!navigator.clipboard?.writeText) {
+      onToast("Couldn’t copy the link in this browser");
+      return;
+    }
+    navigator.clipboard.writeText(url).then(
+      () => onToast("Link copied"),
+      () => onToast("Couldn’t copy the link"),
+    );
+  }
   function addTag() {
     const value = tag.trim().replace(/^#/, "");
     if (value && !note.tags.includes(value))
@@ -425,6 +505,15 @@ export function NoteEditor({
                   ? "Not saved yet — retrying"
                   : "Synced to your account"}
           </span>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={copyLink}
+            aria-label="Copy link"
+            title="Copy link to this page"
+          >
+            <Link2 size={16} />
+          </button>
           {!page && onOpenFullPage && (
             <button
               type="button"
@@ -667,10 +756,61 @@ export function NoteEditor({
               >
                 <Quote size={16} />
               </button>
+              <button
+                className={inTable ? "active" : ""}
+                onClick={() =>
+                  editor
+                    ?.chain()
+                    .focus()
+                    .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
+                    .run()
+                }
+                aria-label="Table"
+                title="Table"
+              >
+                <Table size={16} />
+              </button>
               <small>
                 Type <kbd>/</kbd> to explore
               </small>
             </div>
+            {inTable && (
+              <div className="table-toolbar" role="toolbar" aria-label="Table">
+                <button
+                  onClick={() => editor?.chain().focus().addRowAfter().run()}
+                >
+                  + Row
+                </button>
+                <button
+                  onClick={() => editor?.chain().focus().addColumnAfter().run()}
+                >
+                  + Column
+                </button>
+                <span />
+                <button
+                  onClick={() => editor?.chain().focus().deleteRow().run()}
+                >
+                  − Row
+                </button>
+                <button
+                  onClick={() => editor?.chain().focus().deleteColumn().run()}
+                >
+                  − Column
+                </button>
+                <span />
+                <button
+                  onClick={() => editor?.chain().focus().toggleHeaderRow().run()}
+                >
+                  Header row
+                </button>
+                <button
+                  className="table-toolbar-danger"
+                  onClick={() => editor?.chain().focus().deleteTable().run()}
+                >
+                  Delete table
+                </button>
+              </div>
+            )}
             <div className="editor-content-wrap">
               <EditorContent editor={editor} />
               {slash &&

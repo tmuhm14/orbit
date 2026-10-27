@@ -31,9 +31,11 @@ export function WorkspaceTopbar({
       ? { href: "/projects", label: "Projects" }
       : route.page === "settings"
         ? { href: settingsHref(), label: "Settings" }
-        : route.page === "workflow"
+        : route.page === "workflow" || route.page === "workflow-runs"
           ? { href: "/workflows", label: "Workflows" }
-          : null;
+          : route.page === "workflow-run"
+            ? { href: "/workflows/runs", label: "Run history" }
+            : null;
   const pageLabel =
     route.page === "tasks"
       ? "Tasks"

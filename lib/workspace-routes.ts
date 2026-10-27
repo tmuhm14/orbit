@@ -52,6 +52,11 @@ export function parseRoute(pathname: string | null | undefined): WorkspaceRoute 
   // An unknown subpath has no page file (404); read it as the default.
   if (parts[0] === "settings")
     return { page: "settings", section: parseSettingsSection(parts.slice(1)) ?? DEFAULT_SETTINGS_SECTION };
+  // Run history lives under /workflows; "runs" is never a workflow id (uuids).
+  if (parts[0] === "workflows" && parts[1] === "runs") {
+    if (parts.length === 2) return { page: "workflow-runs" };
+    if (parts.length === 3) return { page: "workflow-run", id: decode(parts[2]) ?? "" };
+  }
   if (parts.length === 2 && (parts[0] === "projects" || parts[0] === "items" || parts[0] === "workflows")) {
     const id = decode(parts[1]) ?? "";
     return parts[0] === "projects" ? { page: "project", id } : parts[0] === "items" ? { page: "item", id } : { page: "workflow", id };
@@ -63,8 +68,26 @@ export function parseRoute(pathname: string | null | undefined): WorkspaceRoute 
 export const projectHref = (id: string) => `/projects/${encodeURIComponent(id)}`;
 /** Full-page reading and editing for any item. */
 export const itemHref = (id: string) => `/items/${encodeURIComponent(id)}`;
+/**
+ * The item id a link points at, when it is this app's own item page
+ * (`origin` + itemHref). Any other URL, host or page is null, so a note
+ * can tell its own links from the web's.
+ */
+export function itemIdFromUrl(href: string, origin: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(href, origin);
+  } catch {
+    return null;
+  }
+  if (url.origin !== origin) return null;
+  const route = parseRoute(url.pathname);
+  return route.page === "item" && route.id ? route.id : null;
+}
 /** The workflow designer. */
 export const workflowHref = (id: string) => `/workflows/${encodeURIComponent(id)}`;
+/** One workflow run's details. */
+export const workflowRunHref = (id: string) => `/workflows/runs/${encodeURIComponent(id)}`;
 
 /** Read-only view of URLSearchParams (Next's ReadonlyURLSearchParams fits). */
 type Params = { get(name: string): string | null } | null | undefined;
@@ -97,6 +120,32 @@ export function tasksHref({ filter = "next", project = null }: Partial<TasksPara
   if (project) query.set("project", project);
   const text = query.toString();
   return text ? `/tasks?${text}` : "/tasks";
+}
+
+// --- Workflow runs -----------------------------------------------------------
+
+export const RUN_STATUS_FILTERS = ["running", "completed", "failed", "canceled", "invalid"] as const;
+export type RunStatusFilter = (typeof RUN_STATUS_FILTERS)[number];
+
+export type WorkflowRunsParams = { status: RunStatusFilter | null; workflow: string | null };
+
+/** `?status=` (one run status, or all) and `?workflow=` (a workflow id, or all). */
+export function parseWorkflowRunsParams(params: Params): WorkflowRunsParams {
+  const status = params?.get("status");
+  const workflow = params?.get("workflow")?.trim();
+  return {
+    status: RUN_STATUS_FILTERS.includes(status as RunStatusFilter) ? (status as RunStatusFilter) : null,
+    workflow: workflow || null,
+  };
+}
+
+/** Canonical run history URL: no filters add nothing. */
+export function workflowRunsHref({ status = null, workflow = null }: Partial<WorkflowRunsParams> = {}) {
+  const query = new URLSearchParams();
+  if (status) query.set("status", status);
+  if (workflow) query.set("workflow", workflow);
+  const text = query.toString();
+  return text ? `/workflows/runs?${text}` : "/workflows/runs";
 }
 
 // --- Library ---------------------------------------------------------------
