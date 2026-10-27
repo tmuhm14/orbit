@@ -19,6 +19,7 @@ import {
   Search,
   Settings2,
   Sparkles,
+  SquareKanban,
   Workflow,
 } from "lucide-react";
 import { BUCKETS } from "@/lib/notes";
@@ -71,8 +72,8 @@ export function WorkspaceSidebar({
   // A project's detail is part of Projects; a full-page item, of the Library.
   const projectsPage = route.page === "projects" || route.page === "project";
   const libraryPage = route.page === "library" || route.page === "item";
-  const workflowsPage = route.page === "workflows" || route.page === "workflow" ||
-    route.page === "workflow-runs" || route.page === "workflow-run";
+  const workflowsPage = route.page === "workflows" || route.page === "workflow";
+  const jiraPage = route.page === "jira";
   return (
     <>
       {open && <div className="sidebar-backdrop" onClick={onClose} />}
@@ -138,6 +139,10 @@ export function WorkspaceSidebar({
           <Link className={`nav-item ${libraryPage ? "active" : ""}`} aria-label="Library" title="Library" href="/library" onClick={onClose} aria-current={current(libraryPage)}>
             <BookOpen size={18} />
             <span>Library</span>
+          </Link>
+          <Link className={`nav-item ${jiraPage ? "active" : ""}`} aria-label="Jira" title="Jira" href="/jira" onClick={onClose} aria-current={current(jiraPage)}>
+            <SquareKanban size={18} />
+            <span>Jira</span>
           </Link>
           <div className="nav-label">
             YOUR BUCKETS <span>{BUCKETS.length}</span>

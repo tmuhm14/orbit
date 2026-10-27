@@ -1,0 +1,87 @@
+/* Jira dashboard (/jira): stats, two panels side by side (assigned to you,
+   coming up), then team activity across the full width. Issue type sets a
+   row's --tone; status category colors its pill. */
+
+main.work-page.jira-page { max-width: 1220px; }
+.jira-spin { animation: assignment-spin 1s linear infinite; }
+.jira-loading { display: flex; align-items: center; gap: 8px; }
+.jira-refresh { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.jira-refresh:disabled { opacity: 0.75; cursor: default; }
+
+.jira-error { margin: 0; padding: 10px 13px; border: 1px solid #c69eb94d; border-radius: 10px; background: #c69eb912; color: #e4c5d9; font-size: 13px; line-height: 1.5; }
+.jira-empty, .jira-hint { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.jira-empty a { color: #c9b6ee; }
+.jira-hint { margin-top: 12px; font-size: 12px; }
+
+/* --- Stats ---------------------------------------------------------------- */
+
+.jira-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+.jira-stats > div { display: grid; gap: 5px; padding: 16px 18px; border: 1px solid #ffffff14; border-radius: 11px; background: #ffffff05; }
+.jira-stats strong { font: 600 25px Manrope, sans-serif; }
+.jira-stats span { color: var(--muted); font-size: 12px; }
+
+/* --- Panels --------------------------------------------------------------- */
+
+.jira-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.jira-panel { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 18px 18px 16px; border: 1px solid #ffffff14; border-radius: 14px; background: #ffffff04; }
+.jira-panel-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+.jira-panel-heading h2 { display: flex; align-items: baseline; gap: 8px; margin: 0; font: 600 17px Manrope, sans-serif; }
+.jira-panel-heading h2 small, .jira-group small, .jira-people small { color: var(--muted); font: 500 12px "DM Sans", sans-serif; }
+.jira-panel-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.jira-open { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; text-decoration: none; }
+.jira-open:hover { color: var(--text); }
+
+.jira-group { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 8px 0 0; color: #c9c7d3; font: 600 11px "JetBrains Mono", ui-monospace, monospace; letter-spacing: 1.2px; text-transform: uppercase; }
+.jira-group.is-late { color: var(--pink); }
+.jira-group-detail { margin-left: auto; color: var(--muted); font: 450 12px "DM Sans", sans-serif; letter-spacing: 0; text-transform: none; }
+.jira-upcoming-group { display: flex; flex-direction: column; gap: 8px; }
+.jira-more { align-self: flex-start; font-size: 12px; }
+
+/* --- Issue rows ----------------------------------------------------------- */
+
+.jira-issues { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.jira-issue { --tone: var(--blue); display: flex; align-items: flex-start; gap: 11px; padding: 9px 4px; border-top: 1px solid var(--border); }
+.jira-issue:first-child { border-top: 0; }
+.jira-issue.tone-bug { --tone: var(--pink); }
+.jira-issue.tone-story { --tone: var(--green); }
+.jira-issue.tone-epic { --tone: var(--purple); }
+.jira-issue.tone-subtask { --tone: var(--slate); }
+.jira-type { flex: none; width: 8px; height: 8px; margin-top: 6px; border-radius: 2px; background: var(--tone); box-shadow: 0 0 10px -2px var(--tone); }
+.jira-issue-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.jira-issue-title { display: flex; gap: 8px; min-width: 0; color: var(--text); font-size: 13.5px; line-height: 1.4; text-decoration: none; }
+a.jira-issue-title:hover .jira-summary { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: #ffffff4d; }
+.jira-key { flex: none; color: var(--muted); font: 500 12px/1.6 "JetBrains Mono", ui-monospace, monospace; }
+.jira-summary { overflow-wrap: anywhere; }
+.jira-issue-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 10px; color: var(--muted); font-size: 11.5px; }
+.jira-status { padding: 2px 7px; border-radius: 999px; background: #a4a8bc1f; color: #c3c6d4; font-weight: 550; }
+.jira-status.is-doing { background: #8fafd924; color: #b4cbea; }
+.jira-status.is-done { background: #91cbb324; color: #b0dcc8; }
+.jira-priority { display: inline-flex; align-items: center; gap: 3px; color: var(--amber); }
+.jira-due.is-late { color: var(--pink); font-weight: 550; }
+.jira-epic { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #b7a6df; }
+.jira-issue-side { flex: none; display: flex; align-items: center; gap: 9px; padding-top: 1px; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+.jira-avatar { display: inline-grid; place-items: center; flex: none; width: 22px; height: 22px; border-radius: 50%; background: #ffffff12; color: #d6d4df; font: 600 9.5px "DM Sans", sans-serif; letter-spacing: 0.3px; }
+.jira-avatar.is-me, .jira-people .is-me .jira-avatar { background: #b09aeb33; color: #e0d6f7; }
+
+/* --- Team activity -------------------------------------------------------- */
+
+.jira-windows { display: inline-flex; padding: 3px; border: 1px solid #ffffff14; border-radius: 9px; background: #ffffff05; }
+.jira-windows a { padding: 3px 10px; border-radius: 6px; color: var(--muted); font-size: 12px; text-decoration: none; }
+.jira-windows a.active { background: #ffffff14; color: var(--text); }
+.jira-people { display: flex; flex-wrap: wrap; gap: 7px; }
+.jira-people a { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 5px; border: 1px solid #ffffff14; border-radius: 999px; color: #d6d4df; font-size: 12.5px; text-decoration: none; transition: border-color var(--motion-fast), background var(--motion-fast); }
+.jira-people a:first-child { padding-left: 11px; }
+.jira-people a:hover { border-color: #ffffff2e; }
+.jira-people a.active { border-color: #b09aeb80; background: #b09aeb1a; color: var(--text); }
+.jira-activity-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+.jira-activity-columns > div { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+@media (max-width: 1000px) {
+  .jira-grid, .jira-activity-columns { grid-template-columns: minmax(0, 1fr); }
+  .jira-stats { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 640px) {
+  .jira-stats { grid-template-columns: repeat(2, 1fr); }
+  .jira-panel { padding: 14px 12px; }
+  .jira-issue-side time { display: none; }
+}

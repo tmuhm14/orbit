@@ -1,6 +1,7 @@
 // Routes inside the signed-in workspace (U-03) and their URL parameters.
 // Everything a view filters on lives in the URL so links, reloads and the
 // browser's back/forward buttons restore it. Pure: no React, no Next.
+import { JIRA_WINDOWS, type JiraWindow } from "./jira/view.ts";
 import { BUCKETS, type BucketId } from "./notes.ts";
 import { DEFAULT_SETTINGS_SECTION, parseSettingsSection, type SettingsSection } from "./settings-sections.ts";
 
@@ -17,8 +18,7 @@ export type WorkspaceRoute =
   | { page: "item"; id: string }
   | { page: "workflows" }
   | { page: "workflow"; id: string }
-  | { page: "workflow-runs" }
-  | { page: "workflow-run"; id: string };
+  | { page: "jira" };
 
 const STATIC: Record<string, WorkspaceRoute> = {
   "": { page: "notes" },
@@ -29,6 +29,7 @@ const STATIC: Record<string, WorkspaceRoute> = {
   projects: { page: "projects" },
   library: { page: "library" },
   workflows: { page: "workflows" },
+  jira: { page: "jira" },
 };
 
 function decode(segment: string): string | null {
@@ -166,6 +167,25 @@ export function libraryHref({ tag = null, q = "" }: Partial<LibraryParams> = {})
   if (q.trim()) query.set("q", q.slice(0, LIBRARY_QUERY_MAX));
   const text = query.toString();
   return text ? `/library?${text}` : "/library";
+}
+
+// --- Jira ------------------------------------------------------------------
+
+export type JiraParams = { days: JiraWindow; person: string | null };
+
+/** `?days=` (team activity window, default 7) and `?person=` (an assignee's name, or everyone). */
+export function parseJiraParams(params: Params): JiraParams {
+  const days = Number(params?.get("days"));
+  const person = params?.get("person")?.trim().slice(0, 120);
+  return { days: (JIRA_WINDOWS as readonly number[]).includes(days) ? (days as JiraWindow) : 7, person: person || null };
+}
+
+export function jiraHref({ days = 7, person = null }: Partial<JiraParams> = {}) {
+  const query = new URLSearchParams();
+  if (days !== 7) query.set("days", String(days));
+  if (person) query.set("person", person);
+  const text = query.toString();
+  return text ? `/jira?${text}` : "/jira";
 }
 
 // --- Notes route -----------------------------------------------------------

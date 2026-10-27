@@ -53,11 +53,9 @@ export function WorkspaceTopbar({
                 ? "Workflows"
                 : route.page === "workflow"
                   ? "Designer"
-                  : route.page === "workflow-runs"
-                    ? "Run history"
-                    : route.page === "workflow-run"
-                      ? "Run"
-                      : null;
+                  : route.page === "jira"
+                    ? "Jira"
+                    : null;
   return (
     <header className="topbar">
       <div className="breadcrumb">
